@@ -165,3 +165,6 @@ Killing Cubase (or `wineserver -k`) makes the next start show "The application w
 ## Safe Mode / Hub: never click by fixed coordinates
 The Safe Mode dialog and the Hub come up in different sizes (Safe Mode 1110x514 and 1387x642; Hub 1255x689 and 1568x856). A hard-coded click meant for OK landed on the "Delete program preferences" option of the larger dialog (selecting it; the dialog says that cannot be undone). Use `bin/safemode-ok` (OK button from the dialog's own size, never touches the options) and `bin/hub-create-empty` (Create Empty from the Hub's size); `cubase-menu-shot` uses them. If Safe Mode shows up, choose "Use current program preferences" unless you really want to reset.
 Idle CPU of Cubase (10 s, % of one core, right after start, so partly startup work): stock 858, with `WINE_DCOMP_BACKBUFFER=1` 626.
+
+## Drag and drop (fixed)
+The freeze was Wine's X11 driver not processing nested X events while IDropTarget::Drop runs (Cubase asks a question there). Fixed by patches/wine/winex11-xdnd-deferred-drop-11.17.patch: drop queued to the message loop, copy/link drops finished early. Verified with Dolphin -> Cubase audio track.

@@ -400,3 +400,21 @@ window unpainted. With this patch the line no longer flickers (Cubase 14,
 wine-staging 11.17) and idle CPU right after start was lower (about 6.3 cores
 against 8.6 in a 10 s sample; both include start-up scanning). Layers on
 `dcomp-steinberg`; a candidate for upstreaming with it.
+
+## winex11-xdnd-deferred-drop-<version>.patch
+
+Dragging a file from a file manager onto Cubase 14 opened its "Import Options"
+dialog, and then nothing in the desktop could be clicked: Cubase had to be
+killed. The dialog is shown from inside `IDropTarget::Drop`, and the X11 driver
+called the drop target from its X event handler. `X11DRV_ProcessEvents` does not
+process nested events (`current_event` is set, so `mask = 0`), so the dialog's
+own message loop got no pointer or keyboard input for as long as `Drop` ran.
+The `XdndDrop` handler now only posts a driver message
+(`WM_X11DRV_XDND_DROP`); the message loop runs the drop after the handler has
+returned. A copy or link drop is also finished early (`XdndFinished` with the
+effect accepted at the last `XdndPosition`; the data was imported when the drag
+entered), because a Wayland file manager behind XWayland holds its drag until it
+gets the answer. A move still waits for the drop's result, since the source
+deletes what it moved when it sees `XdndFinished`. Only `winex11.so` is rebuilt.
+Verified with an mp3 dragged from Dolphin onto a Cubase 14 audio track on
+wine-staging 11.17; a candidate for upstreaming to Wine.
