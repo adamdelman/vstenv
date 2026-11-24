@@ -1,0 +1,20 @@
+#!/bin/bash
+# cubase-quit: close Cubase the way the window's X button does, so the next start does not show the Safe Mode dialog
+# ("The application was terminated unexpectedly", which killing Cubase or its wineserver triggers).
+python3 -I - <<'P'
+from Xlib import X, display, protocol
+d=display.Display(); r=d.screen().root
+def walk(w):
+    yield w
+    try:
+        for c in w.query_tree().children: yield from walk(c)
+    except Exception: pass
+for w in walk(r):
+    try:
+        v=w.get_full_property(d.intern_atom("_NET_WM_NAME"),0)
+        if v and v.value.decode().startswith("Cubase Pro Project"):
+            r.send_event(protocol.event.ClientMessage(window=w,client_type=d.intern_atom("_NET_CLOSE_WINDOW"),data=(32,[X.CurrentTime,2,0,0,0])),event_mask=X.SubstructureRedirectMask|X.SubstructureNotifyMask); d.flush(); print("close requested"); break
+    except Exception: pass
+P
+for i in $(seq 1 30); do pgrep -f '^C:.*Cubase14' >/dev/null || { echo "Cubase exited cleanly"; exit 0; }; sleep 1; done
+echo "Cubase still running (a dialog may be waiting)"; exit 1

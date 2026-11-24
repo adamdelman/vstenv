@@ -1,0 +1,64 @@
+#!/usr/bin/env python3
+"""winshot TITLE_SUBSTRING [OUT.png]
+
+Screenshot one named X11 (Wine) window on a KDE Wayland session.
+xwd/import cannot read XWayland windows (X_GetImage BadMatch), and spectacle's
+"active window" mode would capture whatever is active, so: find the window by
+title, activate it, check the active window really is that window, and only
+then run spectacle. If the check fails nothing is captured.
+"""
+import subprocess, sys, time
+from Xlib import X, display, protocol
+
+def title(w):
+    for prop in ("_NET_WM_NAME", "WM_NAME"):
+        v = w.get_full_property(d.intern_atom(prop), 0)
+        if v:
+            return v.value.decode("utf-8", "replace") if isinstance(v.value, bytes) else str(v.value)
+    return ""
+
+def walk(w):
+    yield w
+    try:
+        for c in w.query_tree().children:
+            yield from walk(c)
+    except Exception:
+        pass
+
+def active_id():
+    v = root.get_full_property(d.intern_atom("_NET_ACTIVE_WINDOW"), X.AnyPropertyType)
+    return v.value[0] if v and len(v.value) else None
+
+if len(sys.argv) < 2:
+    sys.exit(__doc__)
+want = sys.argv[1].lower()
+out = sys.argv[2] if len(sys.argv) > 2 else "winshot.png"
+d = display.Display(); root = d.screen().root
+
+# Largest mapped window whose title contains the substring (skips 1x1 helper windows).
+best = None
+for w in walk(root):
+    try:
+        g = w.get_geometry(); a = w.get_attributes()
+    except Exception:
+        continue
+    if a.map_state != X.IsViewable or g.width < 100 or g.height < 100:
+        continue
+    if want in title(w).lower() and (best is None or g.width * g.height > best[1]):
+        best = (w, g.width * g.height)
+if best is None:
+    sys.exit(f"winshot: no visible window with '{sys.argv[1]}' in its title; nothing captured")
+target = best[0]
+msg = protocol.event.ClientMessage(window=target, client_type=d.intern_atom("_NET_ACTIVE_WINDOW"),
+                                   data=(32, [1, X.CurrentTime, 0, 0, 0]))
+root.send_event(msg, event_mask=X.SubstructureRedirectMask | X.SubstructureNotifyMask)
+d.flush()
+for _ in range(20):
+    time.sleep(0.15)
+    if active_id() == target.id:
+        break
+else:
+    sys.exit(f"winshot: could not activate '{title(target)}'; nothing captured")
+time.sleep(0.4)
+subprocess.run(["spectacle", "-b", "-n", "-a", "-o", out], check=True)
+print(out, "-", title(target))

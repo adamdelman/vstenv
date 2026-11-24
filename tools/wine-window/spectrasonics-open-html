@@ -1,0 +1,13 @@
+#!/bin/sh
+# Wine .html handler: Omnisphere ShellExecutes a bare "rhurltemp.html" (a meta-refresh page); winebrowser mangles it into http://rhurltemp.html/.
+# Resolve the file, pull the Url= out of it, hand that to the host browser.
+arg="$1"
+P="${WINEPREFIX:-$HOME/.local/share/vstenv/prefix}"
+case "$arg" in
+  http://*|https://*) exec xdg-open "$arg" ;;
+  */*|*\\*|?:*) f=$(printf '%s' "$arg" | sed -e 's#^[Zz]:##' -e 's#\\#/#g'); case "$arg" in [Cc]:*) f="$P/drive_c/$(printf '%s' "$arg" | sed -e 's#^[Cc]:##' -e 's#\\#/#g')";; esac ;;
+  *) f="$P/drive_c/users/$USER/AppData/Local/Spectrasonics/$arg" ;;
+esac
+url=$(grep -io 'url=[^">]*' "$f" 2>/dev/null | head -1 | cut -d= -f2- | sed 's/&amp;/\&/g')
+[ -n "$url" ] && exec xdg-open "$url"
+exec xdg-open "$f"

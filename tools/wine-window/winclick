@@ -1,0 +1,92 @@
+#!/usr/bin/env python3
+"""winclick TITLE_SUBSTRING X Y [--right] [--double] [--key KEYNAME ...]
+
+Click at window-relative pixel (X, Y) inside one named X11 (Wine) window, using
+XTEST. Same safety as winshot: the window is found by title, activated, and
+the click only happens if that window really is the active one and the point
+lies inside it. Pair with winshot to see the result; X,Y are pixels of the
+winshot image (the window's own content, without KDE's shadow border: use the
+window geometry printed by `winclick TITLE --geometry`).
+
+  winclick "Cubase Pro Project" --geometry
+  winclick "Cubase Pro Project" 80 90            # left click
+  winclick "Cubase Pro Project" 600 400 --right
+  winclick "Cubase Pro Project" --key Escape
+"""
+import sys, time
+from Xlib import X, XK, display, protocol
+from Xlib.ext import xtest
+
+def title(w):
+    for prop in ("_NET_WM_NAME", "WM_NAME"):
+        v = w.get_full_property(d.intern_atom(prop), 0)
+        if v:
+            return v.value.decode("utf-8", "replace") if isinstance(v.value, bytes) else str(v.value)
+    return ""
+
+def walk(w):
+    yield w
+    try:
+        for c in w.query_tree().children:
+            yield from walk(c)
+    except Exception:
+        pass
+
+def abs_pos(w):
+    x = y = 0
+    while w.id != root.id:
+        g = w.get_geometry(); x += g.x; y += g.y
+        w = w.query_tree().parent
+    return x, y
+
+args = sys.argv[1:]
+if not args:
+    sys.exit(__doc__)
+want = args.pop(0).lower()
+d = display.Display(); root = d.screen().root
+best = None
+for w in walk(root):
+    try:
+        g = w.get_geometry(); a = w.get_attributes()
+    except Exception:
+        continue
+    if a.map_state != X.IsViewable or g.width < 100 or g.height < 100:
+        continue
+    if want in title(w).lower() and (best is None or g.width * g.height > best[1]):
+        best = (w, g.width * g.height)
+if best is None:
+    sys.exit(f"winclick: no visible window with '{want}' in its title; nothing done")
+t = best[0]; g = t.get_geometry(); ox, oy = abs_pos(t); tname = title(t)
+if "--geometry" in args:
+    print(f"{title(t)}: {g.width}x{g.height} at {ox},{oy}"); sys.exit()
+
+msg = protocol.event.ClientMessage(window=t, client_type=d.intern_atom("_NET_ACTIVE_WINDOW"),
+                                   data=(32, [1, X.CurrentTime, 0, 0, 0]))
+root.send_event(msg, event_mask=X.SubstructureRedirectMask | X.SubstructureNotifyMask)
+d.flush()
+for _ in range(20):
+    time.sleep(0.15)
+    v = root.get_full_property(d.intern_atom("_NET_ACTIVE_WINDOW"), X.AnyPropertyType)
+    if v and len(v.value) and v.value[0] == t.id:
+        break
+else:
+    sys.exit(f"winclick: could not activate '{title(t)}'; nothing done")
+
+if "--key" in args:
+    for name in args[args.index("--key") + 1:]:
+        code = d.keysym_to_keycode(XK.string_to_keysym(name))
+        if not code:
+            sys.exit(f"winclick: unknown key {name}")
+        xtest.fake_input(d, X.KeyPress, code); xtest.fake_input(d, X.KeyRelease, code); d.sync(); time.sleep(0.1)
+    print("keys sent to", tname); sys.exit()
+
+nums = [a for a in args if not a.startswith("--")]
+x, y = int(nums[0]), int(nums[1])
+if not (0 <= x < g.width and 0 <= y < g.height):
+    sys.exit(f"winclick: ({x},{y}) is outside the {g.width}x{g.height} window; nothing done")
+button = 3 if "--right" in args else 1
+xtest.fake_input(d, X.MotionNotify, 0, root=root, x=ox + x, y=oy + y); d.sync(); time.sleep(0.15)
+for _ in range(2 if "--double" in args else 1):
+    xtest.fake_input(d, X.ButtonPress, button); d.sync(); time.sleep(0.05)
+    xtest.fake_input(d, X.ButtonRelease, button); d.sync(); time.sleep(0.08)
+print(f"clicked {x},{y} in {tname}")

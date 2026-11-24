@@ -1,0 +1,27 @@
+#!/bin/bash
+# cubase-menu-shot OUT.png [WINE_BIN_DIR]
+# Fresh Cubase 14 start (kills the prefix's wineserver first!), dismisses the Safe Mode dialog and the Hub,
+# right-clicks the empty track list so a context menu opens, takes a winshot of it, closes the menu.
+# Environment (WINEDEBUG, FONTCONFIG_FILE, ...) is inherited, so experiments are one-liners:
+#   FONTCONFIG_FILE=/path/nohint.conf cubase-menu-shot /tmp/nohint.png
+OUT="${1:?out.png}"
+BIN="${2:-$HOME/.local/share/vstenv/wine/wine-11.17-staging-amd64-wow64/bin}"
+HERE="$(cd "$(dirname "$0")" && pwd)"
+export WINEPREFIX="${WINEPREFIX:-$HOME/.local/share/vstenv/prefix}"
+export WINEDEBUG="${WINEDEBUG:--all}"
+"$HERE/cubase-quit" >/dev/null 2>&1       # clean close first: killing Cubase makes the next start show the Safe Mode dialog
+"$BIN/wineserver" -k 2>/dev/null; sleep 3
+cd "$WINEPREFIX/drive_c/Program Files/Steinberg/Cubase 14" || exit 1
+(setsid nohup "$BIN/wine" 'C:\Program Files\Steinberg\Cubase 14\Cubase14.exe' >"${CUBASE_LOG:-/dev/null}" 2>&1 &)
+for i in $(seq 1 80); do
+  sleep 3
+  T=$(xwininfo -root -tree 2>/dev/null)
+  grep -q '"Safe Mode"' <<<"$T" && "$HERE/safemode-ok" >/dev/null 2>&1
+  grep -q '"Cubase Pro Hub"' <<<"$T" && "$HERE/hub-create-empty" >/dev/null 2>&1
+  grep -q '"Cubase Pro Project' <<<"$T" && break
+done
+sleep "${SETTLE:-15}"
+python3 "$HERE/winclick" "Cubase Pro Project" 535 319 --right
+sleep 3
+python3 "$HERE/winshot" "Cubase Pro Project" "$OUT"
+python3 "$HERE/winclick" "Cubase Pro Project" --key Escape
