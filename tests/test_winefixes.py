@@ -39,6 +39,31 @@ class WineFixesTest(unittest.TestCase):
             dll.write_bytes(b"stock dcomp")                      # a re-extracted Wine put the stock file back
             self.assertFalse(winefixes.has(b, "dcomp.dll"), "the marker alone does not count")
             self.assertEqual(sorted(winefixes.remove(b)), sorted(winefixes.FIXES)); self.assertFalse((b.root / winefixes.MARKER_NAME).exists())
+    def test_missing_keys_are_reported_and_a_short_tarball_installs_what_it_has(self):
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d); b = _fake_build(tmp); tgz = _tarball(tmp)
+            with mock.patch.dict("os.environ", {"VSTENV_WINE_FIXES": str(tgz)}): winefixes.install(b)
+            self.assertTrue(winefixes.status(b)["installed"])
+            winefixes.dest(b, "x86_64-unix/win32u.so").write_bytes(b"stock again")   # re-extracted Wine
+            st = winefixes.status(b); self.assertFalse(st["installed"]); self.assertEqual(st["missing"], ["x86_64-unix/win32u.so"])
+            m = json.loads((b.root / winefixes.MARKER_NAME).read_text())             # an older marker without the newer keys
+            for k in ("wineasio.dll", "x86_64-unix/wineasio.dll.so", "x86_64-unix/win32u.so"): m["files"].pop(k)
+            (b.root / winefixes.MARKER_NAME).write_text(json.dumps(m))
+            self.assertEqual(winefixes.status(b)["missing"], ["wineasio.dll", "x86_64-unix/wineasio.dll.so", "x86_64-unix/win32u.so"])
+            with mock.patch.dict("os.environ", {"VSTENV_WINE_FIXES": str(tgz)}): winefixes.install(b)   # reinstalls what is missing
+            self.assertTrue(winefixes.status(b)["installed"])
+    def test_a_tarball_without_some_keys_still_installs_the_rest(self):
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d); b = _fake_build(tmp); tgz = _tarball(tmp)
+            with tarfile.open(tgz) as t: t.extractall(tmp / "x", filter="tar")
+            man = tmp / "x/wine-fixes/manifest.json"; m = json.loads(man.read_text())
+            for k in ("wineasio.dll", "x86_64-unix/win32u.so"): m["files"].pop(k)
+            man.write_text(json.dumps(m))
+            old = tmp / "old.tar.gz"
+            with tarfile.open(old, "w:gz") as t: t.add(tmp / "x/wine-fixes", arcname="wine-fixes")
+            with mock.patch.dict("os.environ", {"VSTENV_WINE_FIXES": str(old)}): got = winefixes.install(b)
+            self.assertEqual(sorted(got), sorted(set(winefixes.FIXES) - {"wineasio.dll", "x86_64-unix/win32u.so"}))
+            self.assertEqual(sorted(winefixes.status(b)["missing"]), ["wineasio.dll", "x86_64-unix/win32u.so"])
     def test_install_refuses_a_tarball_for_another_wine(self):
         with tempfile.TemporaryDirectory() as d:
             tmp = Path(d); b = _fake_build(tmp); tgz = _tarball(tmp, version="10.0")

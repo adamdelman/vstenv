@@ -51,7 +51,8 @@ FIXES = {"dcomp.dll": "DirectComposition (Steinberg's VSTGUI: HALion Sonic 7, Cu
          "wineasio.dll": "WineASIO's PE half: an ASIO driver over JACK/PipeWire for low-latency audio (Cubase); vstenv/wineasio.py registers it",
          "x86_64-unix/wineasio.dll.so": "WineASIO's unix half, under the name Wine loads it by",
          "nirescan.exe": "NI controllers plugged in after Wine started are seen (Komplete Kontrol keyboards, Maschine; from ni-wine)",
-         "x86_64-unix/winex11.so": "a cursor set from another process shows as an arrow, not nothing (WebView2 windows: Minimal Hub)"}
+         "x86_64-unix/winex11.so": "a cursor set from another process shows as an arrow, not nothing (WebView2 windows: Minimal Hub)",
+         "x86_64-unix/win32u.so": "menu icons keep their alpha (32-bit menu bitmaps are alpha-blended); built with FreeType and fontconfig"}
 
 def dest(build: wine.WineBuild, name: str) -> Path:
     """Where a packaged file goes in the Wine build: a bare name is a 64-bit PE
