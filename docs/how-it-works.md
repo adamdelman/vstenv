@@ -310,9 +310,11 @@ Health lists every check behind these; when one fails it names the fix.
   plugin in the DAW to see it. Health lists every setting in effect.
   One more setting, off by default, is `plasma_menu_colors=on`
   (`vstenv recipe set program NAME plasma_menu_colors=on`): Wine's native menu
-  bar is white on a dark Plasma theme, so at each start of that program the
-  Menu, MenuBar and MenuText colours are copied from `kdeglobals`' window
-  colours, and only written when they changed.
+  bar is white on a dark Plasma or GNOME theme, so at each start of that
+  program the Menu, MenuBar and MenuText colours are copied from `kdeglobals`'
+  window colours (Plasma) or set to GNOME's light or dark window colours (from
+  `gsettings` color-scheme, else a `-dark` gtk-theme), and only written when
+  they changed. `XDG_CURRENT_DESKTOP` decides which source is tried first.
   *Drop files onto the plugin in REAPER* is yabridge's own `editor_force_dnd`.
   yabridge already handles drag and drop in both directions (X11/XWayland),
   but REAPER's FX window registers itself as a drop target and catches files

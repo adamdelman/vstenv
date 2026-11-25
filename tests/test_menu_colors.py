@@ -13,6 +13,7 @@ class FakePrefix:
 class MenuColorsTest(unittest.TestCase):
     def setUp(self):
         self.d = Path(tempfile.mkdtemp()); self.kde = self.d / "kdeglobals"
+        p = mock.patch.object(menu_colors.host, "desktop_tool", return_value=None); p.start(); self.addCleanup(p.stop)
 
     def test_parse(self):
         self.kde.write_text(KDE)
@@ -55,6 +56,47 @@ class MenuColorsTest(unittest.TestCase):
             ap.assert_not_called()
             recipes.apply_program(p, "x.exe", {"plasma_menu_colors": "on"})
             ap.assert_called_once()
+
+class GnomeTest(unittest.TestCase):
+    def setUp(self):
+        self.d = Path(tempfile.mkdtemp()); self.kde = self.d / "kdeglobals"
+
+    def gs(self, **vals):
+        def tool(cmd, timeout=30):
+            self.assertEqual(timeout, 3)
+            v = vals.get(cmd[-1])
+            return None if v is None else mock.Mock(returncode=0 if v != "ERR" else 1, stdout=v)
+        return mock.patch.object(menu_colors.host, "desktop_tool", side_effect=tool)
+
+    def test_schemes(self):
+        dark = {"Menu": "36 36 36", "MenuBar": "36 36 36", "MenuText": "255 255 255"}
+        light = {"Menu": "250 250 250", "MenuBar": "250 250 250", "MenuText": "51 51 51"}
+        for out, want in (("'prefer-dark'\n", dark), ("'default'\n", light), ("'prefer-light'\n", light), ("'weird'\n", None)):
+            with self.gs(**{"color-scheme": out}): self.assertEqual(menu_colors.gnome_colors(), want, out)
+
+    def test_gtk_theme_fallback_only_when_scheme_fails(self):
+        with self.gs(**{"color-scheme": "ERR", "gtk-theme": "'Adwaita-Dark'\n"}): self.assertEqual(menu_colors.gnome_colors()["Menu"], "36 36 36")
+        with self.gs(**{"gtk-theme": "'Yaru-dark'\n"}): self.assertEqual(menu_colors.gnome_colors()["MenuText"], "255 255 255")
+        with self.gs(**{"color-scheme": "ERR", "gtk-theme": "'Adwaita'\n"}): self.assertIsNone(menu_colors.gnome_colors())
+        with self.gs(): self.assertIsNone(menu_colors.gnome_colors())      # no gsettings
+
+    def test_timeout_and_missing_tool(self):
+        with mock.patch.object(menu_colors.host, "run", side_effect=__import__("subprocess").TimeoutExpired("gsettings", 3)), \
+             mock.patch.object(menu_colors.host, "which", return_value="/usr/bin/gsettings"):
+            self.assertIsNone(menu_colors.gnome_colors())
+
+    def test_desktop_selection(self):
+        self.kde.write_text(KDE)
+        kde = menu_colors.plasma_colors(self.kde)
+        with self.gs(**{"color-scheme": "'prefer-light'\n"}):
+            for desk, want in (("GNOME", "250 250 250"), ("ubuntu:GNOME", "250 250 250"), ("X-Cinnamon", "250 250 250"),
+                               ("KDE", kde["Menu"]), ("", kde["Menu"])):
+                with mock.patch.dict("os.environ", {"XDG_CURRENT_DESKTOP": desk}):
+                    self.assertEqual(menu_colors.desktop_colors(self.kde)["Menu"], want, desk)
+        with self.gs(), mock.patch.dict("os.environ", {"XDG_CURRENT_DESKTOP": "GNOME"}):
+            self.assertEqual(menu_colors.desktop_colors(self.kde), kde)          # falls back to kdeglobals
+        with self.gs(**{"color-scheme": "'prefer-dark'\n"}), mock.patch.dict("os.environ", {"XDG_CURRENT_DESKTOP": "KDE"}):
+            self.assertEqual(menu_colors.desktop_colors(self.d / "none")["Menu"], "36 36 36")   # no kdeglobals
 
 if __name__ == "__main__":
     unittest.main()

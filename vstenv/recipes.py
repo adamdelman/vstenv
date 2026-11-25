@@ -62,7 +62,7 @@ KNOB_TEXT = {
     "rendering": "Which Direct3D the program gets",
     "wm_away": "Keep the window manager away (menus that flash and close as soon as they open)",
     "browser_software_gl": "Software rendering for its embedded browser window (a window that stays blank or black)",
-    "plasma_menu_colors": "Copy Plasma's window colours into Wine's menu colours (the native menu bar stays white on a dark theme); off unless set on",
+    "plasma_menu_colors": "Copy Plasma's or GNOME's window colours into Wine's menu colours (the native menu bar stays white on a dark theme); off unless set on",
     "hide_wine": "Hide Wine from the plugin (JUCE 8.0.13 and later: an empty panel, missing artwork; never for iLok plugins)",
     "force_dnd": "Let files be dropped onto the plugin in REAPER (REAPER's FX window catches the drop otherwise)",
 }
