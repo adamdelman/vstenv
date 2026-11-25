@@ -48,13 +48,13 @@ class MenuColorsTest(unittest.TestCase):
         self.assertFalse(menu_colors.apply(p, self.kde)); self.assertFalse((self.d / menu_colors.STATE).exists())
 
     def test_off_by_default(self):
-        self.assertIn("plasma_menu_colors", recipes.KNOBS["programs"])
+        self.assertIn("desktop_menu_colors", recipes.KNOBS["programs"])
         p = FakePrefix(self.d)
         with mock.patch.object(menu_colors, "apply") as ap, mock.patch.object(recipes, "overrides_key", return_value="K"):
             p.reg_query = lambda k: {}
             recipes.apply_program(p, "x.exe", {})
             ap.assert_not_called()
-            recipes.apply_program(p, "x.exe", {"plasma_menu_colors": "on"})
+            recipes.apply_program(p, "x.exe", {"desktop_menu_colors": "on"})
             ap.assert_called_once()
 
 class GnomeTest(unittest.TestCase):

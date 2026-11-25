@@ -308,9 +308,9 @@ Health lists every check behind these; when one fails it names the fix.
   run inside yabridge's host), so their one setting, Direct3D, travels as a
   DLL override the host applies when it loads that plugin — reload the
   plugin in the DAW to see it. Health lists every setting in effect.
-  One more setting, off by default, is `plasma_menu_colors=on`
-  (`vstenv recipe set program NAME plasma_menu_colors=on`): Wine's native menu
-  bar is white on a dark Plasma or GNOME theme, so at each start of that
+  One more setting, off by default, is `desktop_menu_colors=on`
+  (`vstenv recipe set program NAME desktop_menu_colors=on`): Wine's native menu
+  bar is white on a dark desktop theme (Plasma or GNOME), so at each start of that
   program the Menu, MenuBar and MenuText colours are copied from `kdeglobals`'
   window colours (Plasma) or set to GNOME's light or dark window colours (from
   `gsettings` color-scheme, else a `-dark` gtk-theme), and only written when

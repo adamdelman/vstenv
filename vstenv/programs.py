@@ -346,7 +346,7 @@ def run(p: Prefix, prog: Program, reporter=None):
     except Exception: pass
     try:
         from . import recipes, menu_colors
-        if recipes.effective(p, "programs", prog.exe.rsplit("\\", 1)[-1])["plasma_menu_colors"][0] == "on": menu_colors.apply(p)
+        if recipes.effective(p, "programs", prog.exe.rsplit("\\", 1)[-1])["desktop_menu_colors"][0] == "on": menu_colors.apply(p)
     except Exception: pass                      # colours are cosmetic: never block a launch
     r.step(f"Starting {prog.name}")
     cwd = p.to_host(prog.workdir) if prog.workdir else None

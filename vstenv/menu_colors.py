@@ -1,4 +1,4 @@
-"""Plasma's or GNOME's window colours for Wine's native menu bars (opt-in: recipe setting plasma_menu_colors).
+"""Plasma's or GNOME's window colours for Wine's native menu bars (opt-in: recipe setting desktop_menu_colors).
 
 Wine draws a program's native menu bar (Cubase's File/Edit/...) from HKCU\\Control Panel\\Colors
 Menu, MenuBar and MenuText, white by default, so the bar stays white on a dark Plasma theme.
