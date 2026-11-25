@@ -609,19 +609,19 @@ another thread; headless KWin Xwayland :3): the strip row without the bar was
 (0,0,0) with the live dcomp.dll and (42,46,51), the image, with this patch;
 the bar stayed visible. Not yet confirmed in Cubase itself.
 
-### wined3d-zz-cs-bounded-progress-wait
+### d2d1-zzz-multithread-protect
 
-Cubase 14 hung when it opened a project (UI thread stuck, ignoring WM_CLOSE).
-A hang trace (`+dcomp`, per-thread CPU and wait samples) showed the UI thread
-inside `surface_BeginDraw` on the 1920x987 virtual surface right after a
-resize, and never returning, while the DirectComposition compositor thread kept
-ticking every ~20 ms. In `wined3d_cs_wait_for_progress()` the command stream
-wakes a waiting client through one auto-reset event and one
-`waiting_for_progress` flag. With two client threads waiting on the same
-stream (the compositor thread reading a surface back, the application resizing
-and drawing; the shared wined3d of `dxgi-zz-shared-wined3d` puts them on one
-stream) one `SetEvent` wakes only one of them, and the other sleeps in
-`WaitForSingleObject(INFINITE)` for good. The wait is now bounded (5 ms): all
-callers loop and re-check their condition, so a lost wake-up costs a few
-milliseconds. This is a mitigation for a lost wake-up that was inferred from
-the trace and the code, not observed directly. Not yet confirmed in Cubase.
+Cubase 14 hung when it opened a project with DXVK as `d3d11`. The hung process had one
+worker thread inside `d2d_device_context_draw` (`SwapDeviceContextState`) that had raised an
+access violation in DXVK's `d3d11.dll`, and Cubase's exception handler then blocked in `dbghelp`
+while holding d2d1's factory lock, so the 12 other image-generator threads queued behind it. The
+faulting instruction appends a command to DXVK's command-stream chunk (`mov 0x8(%rdx),%r8` with
+`rdx` = the context's current chunk = NULL): two threads were inside the same immediate context at
+once. Cubase's threads use a multi-threaded D2D factory, whose lock covers drawing only: bitmap
+`Map`, `Unmap` and copies, and the DirectComposition compositor thread, reach the context without it.
+Wine's own `d3d11` tolerates that, DXVK does not unless multithread protection is on. A device
+context of a multi-threaded factory now turns `ID3D11Multithread` protection on, and
+`d2d_device_context_draw` also holds the device lock, so the swap of the context state is atomic.
+Test: with this patch Cubase opens its Hub and project window and the hang signature (a thread in
+`dbghelp`, threads queued in `d2d_device_context_draw`) is gone, in three runs; without it the hang
+happened in every run.
