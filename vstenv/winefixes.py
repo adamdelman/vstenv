@@ -162,12 +162,13 @@ def install(build: wine.WineBuild, reporter=None, force=False) -> dict[str, str]
     return installed(build)
 
 def remove(build: wine.WineBuild, reporter=None) -> list[str]:
-    """Put the stock DLLs back from their .orig copies."""
+    """Put the stock DLLs back from their .orig copies; a fix with no stock original is an addition (WineASIO) and is deleted."""
     r = null_reporter(reporter); r.step("Restoring stock Wine DLLs")
     back = []
     for name in list((marker(build) or {}).get("files") or {}):
         dst = dest(build, name); orig = dst.with_suffix(dst.suffix + ".orig")
         if orig.exists(): orig.replace(dst); back.append(name)
+        elif dst.exists(): dst.unlink(); back.append(name)
     (build.root / MARKER_NAME).unlink(missing_ok=True)
     r.ok(", ".join(back) if back else "nothing to restore")
     return back

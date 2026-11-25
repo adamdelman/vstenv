@@ -28,6 +28,7 @@ def register(p: Prefix, reporter=None) -> bool:
     """Copy the stub into the prefix's system32 and register it. Idempotent: nothing
     runs when the copy is current and the key exists. False when WineASIO is not in the build."""
     r = null_reporter(reporter); r.step("WineASIO (ASIO driver over JACK/PipeWire)")
+    if not p.exists: r.skip("no prefix yet (vstenv setup)"); return False
     if not winefixes.has(p.build, DLL) or not winefixes.has(p.build, "x86_64-unix/wineasio.dll.so"):
         r.skip("not in this Wine build (vstenv wine-fixes install)"); return False
     src, dst = winefixes.dest(p.build, DLL), p.drive_c / "windows/system32" / SYSTEM32_NAME
@@ -37,3 +38,12 @@ def register(p: Prefix, reporter=None) -> bool:
     cp = p.run(["regsvr32", "/s", SYSTEM32_NAME], timeout=120)
     if cp.returncode != 0 or not registered(p): r.fail(f"regsvr32 {SYSTEM32_NAME} failed ({cp.returncode})"); return False
     r.ok("registered; pick WineASIO as the ASIO driver"); return True
+
+def unregister(p: Prefix, reporter=None) -> bool:
+    """Undo register(): the system32 copy and the registry key. Nothing happens without a
+    prefix or while its wineserver runs (a running Cubase would keep the driver loaded)."""
+    r = null_reporter(reporter); r.step("WineASIO registration")
+    if not p.exists or p.wineserver_running(): r.skip("no prefix, or Wine is running"); return False
+    (p.drive_c / "windows/system32" / SYSTEM32_NAME).unlink(missing_ok=True)
+    if registered(p): p.run([p.REG64, "delete", KEY, "/f"], timeout=60)
+    r.ok("unregistered"); return True

@@ -21,6 +21,23 @@ class WineAsioTest(unittest.TestCase):
             with inst, mock.patch.object(Prefix, "run") as run:
                 self.assertFalse(wineasio.register(p)); run.assert_not_called()
 
+    def test_no_prefix_does_nothing(self):
+        with tempfile.TemporaryDirectory() as d:
+            p, inst = self._prefix(d)
+            import shutil; shutil.rmtree(p.drive_c)
+            with inst, mock.patch.object(Prefix, "run") as run:
+                self.assertFalse(wineasio.register(p)); run.assert_not_called()
+
+    def test_unregister_removes_copy_and_key_unless_running(self):
+        with tempfile.TemporaryDirectory() as d:
+            p, _ = self._prefix(d); dll = p.drive_c / "windows/system32/wineasio64.dll"; dll.write_bytes(b"x")
+            with mock.patch.object(Prefix, "wineserver_running", return_value=True), mock.patch.object(Prefix, "run") as run:
+                self.assertFalse(wineasio.unregister(p)); run.assert_not_called(); self.assertTrue(dll.exists())
+            with mock.patch.object(Prefix, "wineserver_running", return_value=False), \
+                 mock.patch.object(Prefix, "reg_query", return_value={"x": "1"}), mock.patch.object(Prefix, "run") as run:
+                self.assertTrue(wineasio.unregister(p)); self.assertFalse(dll.exists())
+                self.assertEqual(run.call_args.args[0], [Prefix.REG64, "delete", wineasio.KEY, "/f"])
+
     def test_copies_and_registers_once(self):
         with tempfile.TemporaryDirectory() as d:
             p, inst = self._prefix(d); state = {"reg": False}
