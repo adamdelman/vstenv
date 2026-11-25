@@ -582,3 +582,18 @@ minimized case reproduces and is fixed; the re-iconify race did not reproduce
 in a plain run, so that part is from reading the source. Not yet confirmed in Cubase.
 
 Fix to the above: the first build removed WS_MINIMIZE from the style it passed to `get_desired_wm_state`. The minimized window's rectangle is unmapped, so a SetWindowPos landing in the race window made the driver request WithdrawnState and the window vanished from the taskbar. It now takes IconicState from the unmodified style and turns that into NormalState, and drops the flag when X is no longer Normal.
+## win32u.so (rebuilt unix library, no patch of its own)
+
+`dcomp-swapchain-present-<version>.patch` changes `dlls/win32u/menu.c` so that a
+32-bit menu bitmap is drawn with `NtGdiAlphaBlend` (per-pixel alpha); a plain
+BitBlt turns the transparent, premultiplied pixels of Cubase's context-menu
+icons into black squares. But the menu, window and GDI code lives in the unix
+half of win32u, `win32u.so`; the PE `win32u.dll` is only syscall thunks. The
+build script rebuilt only the PE half, so the hunk never reached the runtime
+and every icon stayed a black square even with the Direct2D layer fix
+(`d2d1-zz-layer-opacity-mask`). `scripts/build-wine-fixes.sh` now also builds
+`win32u.so` (in the same X-enabled second configure as `winex11.so`). That
+configure no longer passes `--without-freetype --without-fontconfig`: without
+them the rebuilt `win32u.so` has no font support (it came out 2.3 MB against the
+stock 2.9 MB). The script checks for both
+SONAME defines. Not yet confirmed in a Cubase run.
