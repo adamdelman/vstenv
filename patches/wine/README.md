@@ -491,7 +491,7 @@ ends the menu first. The driver now calls `NtUserEndMenu` when the thread is in
 menu mode, before posting `SC_CLOSE`; its `WM_CANCELMODE` is queued first, so
 the menu ends before the close is handled. Only `winex11.so` is rebuilt. Named
 `zz` so it sorts after `winex11-xdnd-deferred-drop` (same file, later hunk is
-independent). Untested in Cubase at the time of writing.
+independent). Tested in Cubase 14 under Xwayland on KDE Plasma.
 
 ## win32u.so (rebuilt unix library, no patch of its own)
 
@@ -507,7 +507,7 @@ and every icon stayed a black square even with the Direct2D layer fix
 configure no longer passes `--without-freetype --without-fontconfig`: without
 them the rebuilt `win32u.so` has no font support (it came out 2.3 MB against the
 stock 2.9 MB). The script checks for both
-SONAME defines. Not yet confirmed in a Cubase run.
+SONAME defines. Tested in Cubase 14 under Xwayland on KDE Plasma.
 
 ## WineASIO (no patch: built from upstream)
 
@@ -554,7 +554,7 @@ and the window stayed WS_MINIMIZE with X showing it Normal. Upstream master
 has no change here. Test (MinGW program, headless KWin): the disabled-while-
 minimized case reproduces and is fixed; the re-iconify race did not reproduce
 in a plain run, so that part is from reading the source. Layers on
-`winex11-zz-close-ends-menu`; not yet confirmed in Cubase.
+`winex11-zz-close-ends-menu`; tested in Cubase 14 under Xwayland on KDE Plasma.
 
 ## dcomp-zz-swapchain-alpha-blend-<version>.patch
 
@@ -607,7 +607,7 @@ Test (MinGW program `sp.cpp`: a WS_CLIPCHILDREN popup with an image target, a
 child with its own device, target and virtual surface redrawn every 33 ms by
 another thread; headless KWin Xwayland :3): the strip row without the bar was
 (0,0,0) with the live dcomp.dll and (42,46,51), the image, with this patch;
-the bar stayed visible. Not yet confirmed in Cubase itself.
+the bar stayed visible. In Cubase 14 (Xwayland, KDE Plasma) the splash's progress bar still does not show.
 
 ### d2d1-zzz-multithread-protect
 
