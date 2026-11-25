@@ -1,0 +1,13 @@
+#!/bin/bash
+# Capture X window stacking and hints while a window wrongly covers Cubase.
+# Read-only. Usage: stacking-shot [out-file]
+out="${1:-/tmp/claude-1000/stacking-$(date +%H%M%S).txt}"
+{
+  echo "== active"; xprop -root _NET_ACTIVE_WINDOW
+  echo "== stacking (bottom to top)"; xprop -root _NET_CLIENT_LIST_STACKING
+  for w in $(xprop -root _NET_CLIENT_LIST_STACKING | grep -o '0x[0-9a-f]*'); do
+    echo "== $w"
+    xprop -id "$w" WM_CLASS _NET_WM_NAME _NET_WM_STATE WM_TRANSIENT_FOR _NET_WM_WINDOW_TYPE WM_HINTS WM_PROTOCOLS 2>&1
+  done
+} >| "$out"
+echo "$out"

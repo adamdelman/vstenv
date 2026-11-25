@@ -1,0 +1,100 @@
+d2d1: apply a layer's opacity brush to the fills drawn inside it
+
+Cubase 14 draws its menu icons through a layer: PushLayer with an opacity
+brush (the icon's alpha as a bitmap brush), a solid-colour FillRectangle,
+PopLayer. PushLayer/PopLayer are stubs, so the fill landed as a solid 13x13
+square: every context-menu icon came out opaque near-black (0xff010200, the
+glyph colour). Measured with a debug print in the WIC render target readback:
+36 of 36 icons were uniform ff010200 before, 0 after (real alpha shapes).
+
+Keep the one opacity brush of a non-command-list layer in the device context
+until PopLayer and use it as the opacity brush of FillGeometry (and so of
+FillRectangle) when the caller gives none. Geometric masks, nested layers and
+other layer parameters are still ignored.
+
+--- a/dlls/d2d1/d2d1_private.h
++++ b/dlls/d2d1/d2d1_private.h
+@@ -182,6 +182,7 @@
+     const struct d2d_device_context_ops *ops;
+ 
+     ID2D1Factory *factory;
++    ID2D1Brush *layer_opacity_brush;
+     CRITICAL_SECTION *cs;
+     struct d2d_device *device;
+     ID3D11Device1 *d3d_device;
+--- a/dlls/d2d1/device.c
++++ b/dlls/d2d1/device.c
+@@ -1130,7 +1130,12 @@
+         return;
+     }
+ 
+-    if (opacity_brush && brush_impl->type != D2D_BRUSH_TYPE_BITMAP)
++    if (!opacity_brush && context->layer_opacity_brush)
++    {
++        opacity_brush = context->layer_opacity_brush;
++        opacity_brush_impl = unsafe_impl_from_ID2D1Brush(opacity_brush);
++    }
++    else if (opacity_brush && brush_impl->type != D2D_BRUSH_TYPE_BITMAP)
+     {
+         d2d_device_context_set_error(context, D2DERR_INCOMPATIBLE_BRUSH_TYPES);
+         return;
+@@ -1798,6 +1803,8 @@
+         IDWriteRenderingParams_AddRef(text_rendering_params);
+     if (context->text_rendering_params)
+         IDWriteRenderingParams_Release(context->text_rendering_params);
++    if (context->layer_opacity_brush)
++        ID2D1Brush_Release(context->layer_opacity_brush);
+     context->text_rendering_params = text_rendering_params;
+ }
+ 
+@@ -1835,6 +1842,17 @@
+     *tag2 = render_target->drawing_state.tag2;
+ }
+ 
++/* Layers are not implemented, but the common use is a layer whose only effect is an opacity mask
++ * (icons tinted through a bitmap's alpha).  Keep that one brush and apply it to fills until PopLayer;
++ * without it the fills land as solid rectangles. */
++static void d2d_device_context_push_opacity_layer(struct d2d_device_context *context, ID2D1Brush *opacity_brush)
++{
++    if (context->layer_opacity_brush || !opacity_brush)
++        return;
++    ID2D1Brush_AddRef(opacity_brush);
++    context->layer_opacity_brush = opacity_brush;
++}
++
+ static void STDMETHODCALLTYPE d2d_device_context_PushLayer(ID2D1DeviceContext6 *iface,
+         const D2D1_LAYER_PARAMETERS *layer_parameters, ID2D1Layer *layer)
+ {
+@@ -1842,6 +1860,9 @@
+ 
+     FIXME("iface %p, layer_parameters %p, layer %p stub!\n", iface, layer_parameters, layer);
+ 
++    if (context->target.type != D2D_TARGET_COMMAND_LIST)
++        d2d_device_context_push_opacity_layer(context, layer_parameters->opacityBrush);
++
+     if (context->target.type == D2D_TARGET_COMMAND_LIST)
+     {
+         D2D1_LAYER_PARAMETERS1 parameters;
+@@ -1858,6 +1879,12 @@
+ 
+     FIXME("iface %p stub!\n", iface);
+ 
++    if (context->layer_opacity_brush)
++    {
++        ID2D1Brush_Release(context->layer_opacity_brush);
++        context->layer_opacity_brush = NULL;
++    }
++
+     if (context->target.type == D2D_TARGET_COMMAND_LIST)
+         d2d_command_list_pop_layer(context->target.command_list);
+ }
+@@ -2805,6 +2832,9 @@
+ 
+     FIXME("iface %p, layer_parameters %p, layer %p stub!\n", iface, layer_parameters, layer);
+ 
++    if (context->target.type != D2D_TARGET_COMMAND_LIST)
++        d2d_device_context_push_opacity_layer(context, layer_parameters->opacityBrush);
++
+     if (context->target.type == D2D_TARGET_COMMAND_LIST)
+         d2d_command_list_push_layer(context->target.command_list, context, layer_parameters);
+ }

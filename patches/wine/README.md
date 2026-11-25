@@ -294,6 +294,38 @@ the destination. The same line is in
 d2d1 rework that this does not take. Only the 64-bit `d2d1` is rebuilt. It applies to
 every program, but only changes a draw when the program asked for copy mode.
 
+## d2d1-zz-layer-opacity-mask-<version>.patch
+
+Cubase 14's context-menu icons drew as solid near-black squares. It builds each
+icon with Direct2D: PushLayer with an opacity brush (the icon's alpha as a
+bitmap brush), a solid-colour FillRectangle, PopLayer. Wine's PushLayer and
+PopLayer are stubs, so the fill covered the whole 13x13 icon (colour
+0xff010200). The icon bitmaps were already wrong on arrival in the menu code;
+the black is not a D3D readback or `dxgi_surface_GetDC` problem (GetDC returns
+the real UI pixels). A debug print in `d2d_wic_render_target_present` gave 36 of
+36 uniform ff010200 icons before and 0 after the patch (alpha shapes instead).
+The device context now keeps the opacity brush of a layer (non-command-list
+targets only) until PopLayer, and `FillGeometry` (so `FillRectangle`) uses it
+when the caller passes no opacity brush. Geometric masks, nested layers and
+other layer parameters are still ignored. Named `zz` so it sorts after
+`d2d1-primitive-blend-copy` (same file). Not fixed here: the slow context menu
+(about 55 ms per item, spent creating a Direct2D device and WIC render target
+per icon).
+
+## d2d1-zz-shader-cache-<version>.patch
+
+Cubase 14 opens a context menu with ~20 icons in ~1 s because every 13x13 icon
+gets its own Direct2D device (about 55 ms each). `d2d_device_init` ran
+`D3DCompile` on the shape vertex shaders and the pixel shader for every device,
+and `CreateWicBitmapRenderTarget` makes a device too. A mingw micro-benchmark
+of the icon sequence (WIC 13x13 target or D2D device + context, draw,
+CopyFromBitmap/Map, GetDC, ReleaseDC; under the host runtime on a private Xvfb)
+measured 20.0 ms per icon steady state, 16 ms of it device creation. The
+patch compiles once per process (critical section, blobs shared by reference),
+giving 3.4 ms per icon. Left: a new D3D11 device per icon costs another ~32 ms
+(wined3d device/context creation), only if Cubase does that. Named `zz` to sort
+after `d2d1-zz-layer-opacity-mask` (same file).
+
 ## sensapi-isnetworkalive-last-error-<version>.patch
 
 KORG Software Pass opened on "No Internet Connection" with the network working.

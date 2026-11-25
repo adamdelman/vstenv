@@ -1,20 +1,38 @@
 #!/bin/bash
-# cubase-quit: close Cubase the way the window's X button does, so the next start does not show the Safe Mode dialog
-# ("The application was terminated unexpectedly", which killing Cubase or its wineserver triggers).
+# cubase-quit: close Cubase like the window's X button, answer the "save project?" dialog with Don't Save (key "d"),
+# then close the Hub that comes back. Avoids the Safe Mode dialog that killing Cubase causes on the next start.
+# Honours $DISPLAY (also works on a private Xvfb without a window manager). Never presses Save.
 python3 -I - <<'P'
-from Xlib import X, display, protocol
+import time, subprocess
+from Xlib import X, XK, display, protocol
+from Xlib.ext import xtest
 d=display.Display(); r=d.screen().root
 def walk(w):
     yield w
     try:
         for c in w.query_tree().children: yield from walk(c)
     except Exception: pass
-for w in walk(r):
-    try:
-        v=w.get_full_property(d.intern_atom("_NET_WM_NAME"),0)
-        if v and v.value.decode().startswith("Cubase Pro Project"):
-            r.send_event(protocol.event.ClientMessage(window=w,client_type=d.intern_atom("_NET_CLOSE_WINDOW"),data=(32,[X.CurrentTime,2,0,0,0])),event_mask=X.SubstructureRedirectMask|X.SubstructureNotifyMask); d.flush(); print("close requested"); break
-    except Exception: pass
+def title(w):
+    v=w.get_full_property(d.intern_atom("_NET_WM_NAME"),0) or w.get_full_property(d.intern_atom("WM_NAME"),0)
+    return (v.value.decode() if isinstance(v.value,bytes) else str(v.value)) if v else ""
+def find(pred):
+    for w in walk(r):
+        try:
+            if w.get_attributes().map_state==X.IsViewable and pred(title(w),w.get_geometry()): return w
+        except Exception: pass
+def close(w):
+    w.send_event(protocol.event.ClientMessage(window=w,client_type=d.intern_atom("WM_PROTOCOLS"),data=(32,[d.intern_atom("WM_DELETE_WINDOW"),X.CurrentTime,0,0,0]))); d.flush()
+def key(n):
+    kc=d.keysym_to_keycode(XK.string_to_keysym(n)); xtest.fake_input(d,X.KeyPress,kc); d.sync(); xtest.fake_input(d,X.KeyRelease,kc); d.sync()
+w=find(lambda t,g:t.startswith("Cubase Pro Project"))
+if w: close(w); print("close requested")
+for i in range(40):
+    time.sleep(1)
+    if subprocess.run(["pgrep","-f","^C:.*Cubase14"],capture_output=True).returncode: break
+    if find(lambda t,g:t=="Cubase Pro" and g.width>200 and g.height>80):   # Save / Don't Save / Cancel (317x108)
+        key("d"); print("Don't Save sent"); time.sleep(2)
+    hub=find(lambda t,g:t=="Cubase Pro Hub")
+    if hub: close(hub)
 P
 for i in $(seq 1 30); do pgrep -f '^C:.*Cubase14' >/dev/null || { echo "Cubase exited cleanly"; exit 0; }; sleep 1; done
 echo "Cubase still running (a dialog may be waiting)"; exit 1

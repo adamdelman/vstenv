@@ -1,0 +1,63 @@
+#!/usr/bin/env python3
+"""vx: helper for Cubase on a private Xvfb (DISPLAY=:99 by default; never touches the user's display).
+  vx tree                      list named windows with geometry
+  vx shot OUT.png              screenshot of the whole virtual screen
+  vx click X Y [--right]       click at ABSOLUTE screen coords
+  vx wclick TITLE X Y [--right]  click at window-relative coords (client origin)
+  vx key KEYSYM...             send keys (e.g. Escape Return)
+  vx close TITLE               WM_DELETE_WINDOW to the largest visible window whose title contains TITLE
+"""
+import os, sys, time, subprocess
+os.environ.setdefault("DISPLAY", ":99")
+if os.environ["DISPLAY"] in (":0", ":1"): sys.exit("vx: refusing to use the user's display")
+from Xlib import X, XK, display, protocol
+from Xlib.ext import xtest
+d = display.Display(); root = d.screen().root
+
+def title(w):
+    for p in ("_NET_WM_NAME", "WM_NAME"):
+        v = w.get_full_property(d.intern_atom(p), 0)
+        if v: return v.value.decode("utf-8", "replace") if isinstance(v.value, bytes) else str(v.value)
+    return ""
+def walk(w, ox=0, oy=0):
+    try: g = w.get_geometry()
+    except Exception: return
+    x, y = ox + g.x, oy + g.y
+    yield w, x, y, g
+    try:
+        for c in w.query_tree().children: yield from walk(c, x, y)
+    except Exception: pass
+def find(t):
+    best = None
+    for w, x, y, g in walk(root):
+        try: a = w.get_attributes()
+        except Exception: continue
+        if a.map_state == X.IsViewable and t.lower() in title(w).lower() and g.width > 50 and (best is None or g.width*g.height > best[3].width*best[3].height):
+            best = (w, x, y, g)
+    return best
+def click(x, y, right=False):
+    xtest.fake_input(d, X.MotionNotify, 0, X.CurrentTime, root, x, y); d.sync(); time.sleep(0.2)
+    b = 3 if right else 1
+    xtest.fake_input(d, X.ButtonPress, b); d.sync(); time.sleep(0.1)
+    xtest.fake_input(d, X.ButtonRelease, b); d.sync()
+
+a = sys.argv[1:]
+if not a: sys.exit(__doc__)
+if a[0] == "tree":
+    for w, x, y, g in walk(root):
+        t = title(w)
+        if t and w.get_attributes().map_state == X.IsViewable: print(f"{t!r} {g.width}x{g.height}+{x}+{y}")
+elif a[0] == "shot":
+    subprocess.run(f"xwd -root -display {os.environ['DISPLAY']} | magick xwd:- {a[1]}", shell=True, check=True)
+elif a[0] == "click": click(int(a[1]), int(a[2]), "--right" in a)
+elif a[0] == "wclick":
+    b = find(a[1]) or sys.exit("no window")
+    click(b[1] + int(a[2]), b[2] + int(a[3]), "--right" in a)
+elif a[0] == "key":
+    for k in a[1:]:
+        kc = d.keysym_to_keycode(XK.string_to_keysym(k))
+        xtest.fake_input(d, X.KeyPress, kc); d.sync(); xtest.fake_input(d, X.KeyRelease, kc); d.sync(); time.sleep(0.1)
+elif a[0] == "close":
+    b = find(a[1]) or sys.exit("no window")
+    ev = protocol.event.ClientMessage(window=b[0], client_type=d.intern_atom("WM_PROTOCOLS"), data=(32, [d.intern_atom("WM_DELETE_WINDOW"), X.CurrentTime, 0, 0, 0]))
+    b[0].send_event(ev); d.flush()

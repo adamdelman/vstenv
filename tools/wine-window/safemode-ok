@@ -2,7 +2,13 @@
 # safemode-ok: press OK in Cubase's Safe Mode dialog, wherever it is and whatever its size.
 # OK sits 170 px from the right and 27 px from the bottom of the dialog's client area (checked at 1110x514 and 1387x642).
 # Never clicks the option radios: "Delete program preferences" cannot be undone.
+# On a private Xvfb (DISPLAY=:99, no window manager) it uses vx instead of winclick; never on :0/:1.
 HERE="$(cd "$(dirname "$0")" && pwd)"
+if [ "$DISPLAY" = ":99" ]; then
+  G=$(python3 "$HERE/vx" tree | grep "^'Safe Mode'") || exit 1
+  read W H <<<"$(sed -E 's/.* ([0-9]+)x([0-9]+)\+.*/\1 \2/' <<<"$G")"
+  python3 "$HERE/vx" wclick "Safe Mode" $((W-170)) $((H-27)); exit $?
+fi
 G=$(python3 "$HERE/winclick" "Safe Mode" --geometry 2>/dev/null) || exit 1
 read W H <<<"$(sed -E 's/.*: ([0-9]+)x([0-9]+) at.*/\1 \2/' <<<"$G")"
 python3 "$HERE/winclick" "Safe Mode" $((W-170)) $((H-27))
