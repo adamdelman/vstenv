@@ -582,3 +582,18 @@ every cycle with the compose-thread dcomp, 0 with this patch. Limit: what a
 program paints onto the top-level window itself after the first frame is
 overwritten by the retained frame (child windows are not touched). Layers on
 `dcomp-zz-swapchain-alpha-blend`.
+
+The same patch carries the child-window fix for Cubase 14's splash. The
+splash is a 750x407 window whose image is one dcomp target; the progress bar
+and the loading text are a child ("Plugin View" with a 750x21 child of its
+own) with a second device and target, a premultiplied virtual surface redrawn
+every 33 ms. The parent's device context has WS_CLIPCHILDREN, so nothing ever
+painted the image under the child, and the child's transparent pixels showed
+the black window: a black strip over the lower edge of the image (the xwd of
+the splash window itself showed it, so not a compositor or KWin issue). A
+child's target now takes its base from the nearest composed ancestor's frame.
+Test (MinGW program `sp.cpp`: a WS_CLIPCHILDREN popup with an image target, a
+child with its own device, target and virtual surface redrawn every 33 ms by
+another thread; headless KWin Xwayland :3): the strip row without the bar was
+(0,0,0) with the live dcomp.dll and (42,46,51), the image, with this patch;
+the bar stayed visible. Not yet confirmed in Cubase itself.
