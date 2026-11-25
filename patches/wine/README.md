@@ -468,7 +468,7 @@ Test (MinGW program `sp.cpp`: a WS_CLIPCHILDREN popup with an image target, a
 child with its own device, target and virtual surface redrawn every 33 ms by
 another thread; headless KWin Xwayland :3): the strip row without the bar was
 (0,0,0) with the live dcomp.dll and (42,46,51), the image, with this patch;
-the bar stayed visible. Not yet confirmed in Cubase itself.
+the bar stayed visible. In Cubase 14 (Xwayland, KDE Plasma) the splash's progress bar still does not show.
 ## d2d1-zz-layer-opacity-mask-<version>.patch
 
 Cubase 14's context-menu icons drew as solid near-black squares. It builds each
@@ -567,7 +567,7 @@ ends the menu first. The driver now calls `NtUserEndMenu` when the thread is in
 menu mode, before posting `SC_CLOSE`; its `WM_CANCELMODE` is queued first, so
 the menu ends before the close is handled. Only `winex11.so` is rebuilt. Named
 `zz` so it sorts after `winex11-xdnd-deferred-drop` (same file, later hunk is
-independent). Untested in Cubase at the time of writing.
+independent). Tested in Cubase 14 under Xwayland on KDE Plasma.
 ## winex11-zz-wm-restore-follows-<version>.patch
 
 Restoring the minimized Cubase 14 window from the taskbar took many clicks.
@@ -583,7 +583,7 @@ foreground out-parameter) and restores a disabled window directly with
 and the window stayed WS_MINIMIZE with X showing it Normal. Upstream master
 has no change here. Test (MinGW program, headless KWin): the disabled-while-
 minimized case reproduces and is fixed; the re-iconify race did not reproduce
-in a plain run, so that part is from reading the source. Not yet confirmed in Cubase.
+in a plain run, so that part is from reading the source. Tested in Cubase 14 under Xwayland on KDE Plasma.
 
 Fix to the above: the first build removed WS_MINIMIZE from the style it passed to `get_desired_wm_state`. The minimized window's rectangle is unmapped, so a SetWindowPos landing in the race window made the driver request WithdrawnState and the window vanished from the taskbar. It now takes IconicState from the unmodified style and turns that into NormalState, and drops the flag when X is no longer Normal.
 ## win32u.so (rebuilt unix library, no patch of its own)
@@ -600,7 +600,7 @@ and every icon stayed a black square even with the Direct2D layer fix
 configure no longer passes `--without-freetype --without-fontconfig`: without
 them the rebuilt `win32u.so` has no font support (it came out 2.3 MB against the
 stock 2.9 MB). The script checks for both
-SONAME defines. Not yet confirmed in a Cubase run.
+SONAME defines. Tested in Cubase 14 under Xwayland on KDE Plasma.
 ## WineASIO (no patch: built from upstream)
 
 The tarball also carries WineASIO 1.3.0 (github.com/wineasio/wineasio), an ASIO
