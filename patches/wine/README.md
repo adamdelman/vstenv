@@ -432,3 +432,18 @@ menu mode, before posting `SC_CLOSE`; its `WM_CANCELMODE` is queued first, so
 the menu ends before the close is handled. Only `winex11.so` is rebuilt. Named
 `zz` so it sorts after `winex11-xdnd-deferred-drop` (same file, later hunk is
 independent). Untested in Cubase at the time of writing.
+
+## WineASIO (no patch: built from upstream)
+
+The tarball also carries WineASIO 1.3.0 (github.com/wineasio/wineasio), an ASIO
+driver over JACK, for low-latency audio in Cubase and other ASIO hosts. It is
+built from upstream source with the patched tree's own `winegcc`/`winebuild`
+(64-bit only) and installed as `x86_64-unix/wineasio.dll.so` (the only unix name
+Wine 11 loads; the AUR's `wineasio64.dll.so` is ignored) and the PE stub
+`wineasio.dll`. `vstenv/wineasio.py` (setup, `vstenv wine-fixes install`) copies
+the stub into the prefix's system32 as `wineasio64.dll` and runs `regsvr32 /s`
+through the app's Wine runner, which creates `HKLM\Software\ASIO\WineASIO`.
+Wine runs on the host, so it dlopens the host's `libjack.so.0`: PipeWire's
+(`pipewire-jack`) or JACK's own must be installed there. In Cubase: Studio > Studio
+Setup > Audio System > ASIO Driver = WineASIO; the buffer size is set in its
+Control Panel button there.

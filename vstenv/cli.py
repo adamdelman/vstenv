@@ -381,7 +381,9 @@ def cmd_wine_fixes(a):
         return
     r = ConsoleReporter()
     if a.action == "remove": winefixes.remove(b, r)
-    else: winefixes.install(b, r, force=a.force)
+    else:
+        winefixes.install(b, r, force=a.force)
+        from . import wineasio; wineasio.register(_prefix(), r)   # new files: register them (not under `remove`)
     _fail_if(r)
 
 def cmd_dxvk(a):
