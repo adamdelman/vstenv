@@ -1,7 +1,7 @@
 import json, tempfile, unittest
 from pathlib import Path
 from unittest import mock
-from vstenv import menu_colors, recipes
+from vstenv import menu_colors, paths, recipes
 
 KDE = "[Colors:View]\nBackgroundNormal=1,2,3\n\n[Colors:Window]\nBackgroundNormal = 49,54,59\nForegroundNormal=252,252,252\n"
 
@@ -30,7 +30,14 @@ class MenuColorsTest(unittest.TestCase):
 
     def test_xdg_config_home(self):
         (self.d / "kdeglobals").write_text(KDE)
-        with mock.patch.dict("os.environ", {"XDG_CONFIG_HOME": str(self.d)}):
+        with mock.patch.dict("os.environ", {"XDG_CONFIG_HOME": str(self.d)}), mock.patch.object(paths, "_IN_FLATPAK", False):
+            self.assertIsNotNone(menu_colors.plasma_colors())
+
+    def test_flatpak_reads_the_hosts_config_not_the_remapped_one(self):
+        (self.d / "kdeglobals").write_text(KDE); (self.d / ".config").mkdir(); (self.d / ".config/kdeglobals").write_text(KDE)
+        remapped = self.d / "remapped"; remapped.mkdir()
+        with mock.patch.dict("os.environ", {"XDG_CONFIG_HOME": str(remapped)}), mock.patch.object(paths, "_IN_FLATPAK", True), \
+             mock.patch.object(Path, "home", return_value=self.d):
             self.assertIsNotNone(menu_colors.plasma_colors())
 
     def test_reg_command_then_noop_when_unchanged(self):

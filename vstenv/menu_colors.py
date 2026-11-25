@@ -10,7 +10,7 @@ run when they have not changed.
 """
 import json, os
 from pathlib import Path
-from . import host
+from . import host, paths
 from .wine import Prefix
 
 KEY = r"HKCU\Control Panel\Colors"
@@ -50,7 +50,7 @@ def _rgb(s) -> str | None:
 
 def plasma_colors(path: Path | None = None) -> dict[str, str] | None:
     """{value name: 'r g b'} from kdeglobals, or None when the file or either key is missing or malformed."""
-    path = path or Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "kdeglobals"
+    path = path or paths._xdg("XDG_CONFIG_HOME", ".config") / "kdeglobals"   # in the Flatpak: the host's ~/.config (--filesystem=host), not the remapped XDG_CONFIG_HOME
     try: lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError: return None
     sec, got = None, {}
