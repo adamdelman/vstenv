@@ -608,3 +608,20 @@ child with its own device, target and virtual surface redrawn every 33 ms by
 another thread; headless KWin Xwayland :3): the strip row without the bar was
 (0,0,0) with the live dcomp.dll and (42,46,51), the image, with this patch;
 the bar stayed visible. Not yet confirmed in Cubase itself.
+
+### wined3d-zz-cs-bounded-progress-wait
+
+Cubase 14 hung when it opened a project (UI thread stuck, ignoring WM_CLOSE).
+A hang trace (`+dcomp`, per-thread CPU and wait samples) showed the UI thread
+inside `surface_BeginDraw` on the 1920x987 virtual surface right after a
+resize, and never returning, while the DirectComposition compositor thread kept
+ticking every ~20 ms. In `wined3d_cs_wait_for_progress()` the command stream
+wakes a waiting client through one auto-reset event and one
+`waiting_for_progress` flag. With two client threads waiting on the same
+stream (the compositor thread reading a surface back, the application resizing
+and drawing; the shared wined3d of `dxgi-zz-shared-wined3d` puts them on one
+stream) one `SetEvent` wakes only one of them, and the other sleeps in
+`WaitForSingleObject(INFINITE)` for good. The wait is now bounded (5 ms): all
+callers loop and re-check their condition, so a lost wake-up costs a few
+milliseconds. This is a mitigation for a lost wake-up that was inferred from
+the trace and the code, not observed directly. Not yet confirmed in Cubase.
