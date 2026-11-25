@@ -29,7 +29,7 @@ from . import paths, wine
 from .download import fetch, text
 from .progress import null_reporter
 
-RELEASE_REPO = wine.RELEASE_REPO
+RELEASE_REPO = "adamdelman/vstenv"   # cubase14-fixes test build: the patched DLLs come from this fork's release
 PE_DIR = "lib/wine/x86_64-windows"
 MARKER_NAME = "vstenv-wine-fixes.json"
 FIXES = {"dcomp.dll": "DirectComposition (Steinberg's VSTGUI: HALion Sonic 7, Cubase, Dorico; JUCE 8 GUIs: Spitfire Audio), "

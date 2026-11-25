@@ -39,6 +39,19 @@ not the vendor's support. Product names and trademarks belong to their owners.
 [Linux versions and desktops](#linux-versions-and-desktops) ·
 [Questions](#questions)
 
+> **Cubase 14 fixes: test build.** This branch combines the fixes proposed in
+> [dguedry/vstenv#24–#36](https://github.com/dguedry/vstenv/pulls?q=is%3Apr+author%3Aadamdelman).
+> It needs no compiling:
+>
+> ```sh
+> curl -LO https://github.com/adamdelman/vstenv/releases/latest/download/vstenv.flatpak
+> flatpak install --user vstenv.flatpak
+> ```
+>
+> It replaces an installed VST Environment. The app downloads the patched Wine
+> files from this fork's release when it first starts. To go back, install the
+> official app again as shown below.
+
 ## Install
 
 You need Flatpak, which most Linux systems already have. If yours doesn't, see
