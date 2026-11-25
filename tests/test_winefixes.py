@@ -95,6 +95,13 @@ class WineFixesTest(unittest.TestCase):
                 with p3, p4: winefixes.install(b)
                 self.assertEqual((b.root / winefixes.PE_DIR / "dcomp.dll").read_bytes(), b"second"); self.assertEqual(winefixes.marker(b)["release"], "v0.2.1")
                 self.assertEqual((b.root / winefixes.PE_DIR / "dcomp.dll.orig").read_bytes(), b"stock dcomp.dll", "the stock file stays the original")
+    def test_remove_deletes_additions_that_have_no_original(self):
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d); b = _fake_build(tmp); tgz = _tarball(tmp)
+            winefixes.dest(b, "wineasio.dll").unlink()          # WineASIO is not in stock Wine: no .orig is made
+            with mock.patch.dict("os.environ", {"VSTENV_WINE_FIXES": str(tgz)}): winefixes.install(b)
+            self.assertFalse(winefixes.dest(b, "wineasio.dll").with_suffix(".dll.orig").exists())
+            winefixes.remove(b); self.assertFalse(winefixes.dest(b, "wineasio.dll").exists())
     def test_install_refuses_a_tarball_for_another_wine(self):
         with tempfile.TemporaryDirectory() as d:
             tmp = Path(d); b = _fake_build(tmp); tgz = _tarball(tmp, version="10.0")

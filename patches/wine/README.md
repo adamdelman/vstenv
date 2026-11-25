@@ -597,3 +597,17 @@ configure no longer passes `--without-freetype --without-fontconfig`: without
 them the rebuilt `win32u.so` has no font support (it came out 2.3 MB against the
 stock 2.9 MB). The script checks for both
 SONAME defines. Not yet confirmed in a Cubase run.
+## WineASIO (no patch: built from upstream)
+
+The tarball also carries WineASIO 1.3.0 (github.com/wineasio/wineasio), an ASIO
+driver over JACK, for low-latency audio in Cubase and other ASIO hosts. It is
+built from upstream source with the patched tree's own `winegcc`/`winebuild`
+(64-bit only) and installed as `x86_64-unix/wineasio.dll.so` (the only unix name
+Wine 11 loads; the AUR's `wineasio64.dll.so` is ignored) and the PE stub
+`wineasio.dll`. `vstenv/wineasio.py` (setup, `vstenv wine-fixes install`) copies
+the stub into the prefix's system32 as `wineasio64.dll` and runs `regsvr32 /s`
+through the app's Wine runner, which creates `HKLM\Software\ASIO\WineASIO`.
+Wine runs on the host, so it dlopens the host's `libjack.so.0`: PipeWire's
+(`pipewire-jack`) or JACK's own must be installed there. In Cubase: Studio > Studio
+Setup > Audio System > ASIO Driver = WineASIO; the buffer size is set in its
+Control Panel button there.
