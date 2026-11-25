@@ -306,8 +306,15 @@ the real UI pixels). A debug print in `d2d_wic_render_target_present` gave 36 of
 36 uniform ff010200 icons before and 0 after the patch (alpha shapes instead).
 The device context now keeps the opacity brush of a layer (non-command-list
 targets only) until PopLayer, and `FillGeometry` (so `FillRectangle`) uses it
-when the caller passes no opacity brush. Geometric masks, nested layers and
-other layer parameters are still ignored. Named `zz` so it sorts after
+when the caller passes no opacity brush. Geometric masks and other layer
+parameters are still ignored; layers are counted, so only the outermost
+layer's brush applies and an inner PopLayer leaves it. The brush is released in
+PopLayer, in EndDraw (a layer left open) and when the context is destroyed. An
+earlier version released it inside `SetTextRenderingParams` without clearing it,
+which crashed a test that set text rendering params inside a layer (checked:
+the old build crashes in that scenario, the new one passes it, together with a
+nested layer, a layer left open and a layer that is released with the context;
+the icon mask renders the same 88 transparent / 81 painted pixels). Named `zz` so it sorts after
 `d2d1-primitive-blend-copy` (same file). Not fixed here: the slow context menu
 (about 55 ms per item, spent creating a Direct2D device and WIC render target
 per icon).
