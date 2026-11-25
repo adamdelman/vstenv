@@ -466,16 +466,15 @@ done"""
                   ("syswow64", "i386-windows", "user32.dll"), ("system32", "x86_64-windows", "ntdll.dll"))
 
     def foreign_dlls(self) -> list[str]:
-        """Prefix builtin DLLs that differ in size from this wine build's copies.
-        DLLs that `vstenv wine-fixes` replaced in the build are skipped: the patched
-        copy is legitimately a different size from the prefix's stock one."""
-        from . import winefixes     # imports this module
-        patched = winefixes.installed(self.build)
+        """Prefix builtin DLLs whose size matches neither this wine build's copy nor its
+        `.orig` (the stock file `vstenv wine-fixes` replaced: the prefix keeps that one
+        until a prefix update, so it is legitimately a different size from the patched copy)."""
         bad = []
         for sysdir, pedir, dll in self.PROBE_DLLS:
-            if (dll if pedir == "x86_64-windows" else f"{pedir}/{dll}") in patched: continue
             ours = self.build.root / "lib/wine" / pedir / dll; mine = self.drive_c / "windows" / sysdir / dll
-            if ours.exists() and mine.exists() and ours.stat().st_size != mine.stat().st_size: bad.append(f"{sysdir}/{dll}")
+            if not (ours.exists() and mine.exists()): continue
+            orig = ours.with_name(dll + ".orig")
+            if mine.stat().st_size not in {ours.stat().st_size, *([orig.stat().st_size] if orig.exists() else [])}: bad.append(f"{sysdir}/{dll}")
         return bad
 
     def refresh_builtins(self, reporter=None) -> bool:

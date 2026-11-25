@@ -111,8 +111,11 @@ class ForeignDllsTest(unittest.TestCase):
             for sysdir, pedir, dll in p.PROBE_DLLS:
                 for f, data in ((b.root / "lib/wine" / pedir / dll, b"ours"), (p.drive_c / "windows" / sysdir / dll, b"theirs!")):
                     f.parent.mkdir(parents=True, exist_ok=True); f.write_bytes(data)
-            ntdll = winefixes.dest(b, "ntdll.dll"); ntdll.write_bytes(b"patched")
-            (b.root / winefixes.MARKER_NAME).write_text(json.dumps({"files": {"ntdll.dll": hashlib.sha256(b"patched").hexdigest()}}))
+            ntdll = winefixes.dest(b, "ntdll.dll"); ntdll.write_bytes(b"patched"); ntdll.with_suffix(".dll.orig").write_bytes(b"theirs!")
             self.assertEqual(p.foreign_dlls(), ["syswow64/comctl32.dll", "system32/comctl32.dll", "syswow64/user32.dll"])
+            (p.drive_c / "windows/system32/ntdll.dll").write_bytes(b"another wine's")   # neither the patched nor the stock size
+            self.assertIn("system32/ntdll.dll", p.foreign_dlls())
+            (p.drive_c / "windows/system32/ntdll.dll").write_bytes(b"patched")          # refreshed prefix
+            self.assertNotIn("system32/ntdll.dll", p.foreign_dlls())
 
 if __name__ == "__main__": unittest.main()
