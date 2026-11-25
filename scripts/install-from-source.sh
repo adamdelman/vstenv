@@ -40,15 +40,18 @@ fi
 # WineASIO loads libjack at run time: no JACK headers are needed to build it.
 
 # (b) a running Windows program may be using the runtime
+if [ "$DRY" -eq 1 ]; then echo "== would check: Cubase14.exe and wineserver are not running"
+else
 if pgrep -x Cubase14.exe >/dev/null && [ "$FORCE" -eq 0 ]; then die "Cubase14.exe is running; close it (or --force)"; fi
 if pgrep -x wineserver >/dev/null; then
-    [ "$FORCE" -eq 1 ] || [ "$DRY" -eq 1 ] || die "a wineserver is running (a Windows program may use the runtime); close it or pass --force"
+    [ "$FORCE" -eq 1 ] || die "a wineserver is running (a Windows program may use the runtime); close it or pass --force"
     echo "warning: a wineserver is running" >&2
+fi
 fi
 
 # (c) launcher: vstenv on PATH, else the flatpak, else this checkout
 if command -v vstenv >/dev/null; then LAUNCH=(vstenv); FLATPAK=0
-elif command -v flatpak >/dev/null && flatpak info io.github.dguedry.vstenv >/dev/null 2>&1; then LAUNCH=(flatpak run --command=vstenv); FLATPAK=1
+elif command -v flatpak >/dev/null && flatpak info io.github.dguedry.vstenv >/dev/null 2>&1; then LAUNCH=(flatpak run --command=vstenv io.github.dguedry.vstenv); FLATPAK=1
 else LAUNCH=(env "PYTHONPATH=$HERE" python3 -m vstenv); FLATPAK=0; fi
 
 if [ -z "$WORK" ]; then
