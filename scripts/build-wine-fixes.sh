@@ -108,9 +108,15 @@ done
 # headers are needed here. 64-bit only.
 WINEASIO_VERSION=1.3.0
 echo "== build WineASIO $WINEASIO_VERSION"
-curl -fsSL "https://github.com/wineasio/wineasio/archive/refs/tags/v$WINEASIO_VERSION.tar.gz" | tar -xz -C "$WORK"
+WINEASIO_SHA256=91267e22f2684b27a1d656021c52e1ff05f7cc9241086ae526bff551410b9325   # v1.3.0 archive; bump with WINEASIO_VERSION
+curl -fsSL -o wineasio.tar.gz "https://github.com/wineasio/wineasio/archive/refs/tags/v$WINEASIO_VERSION.tar.gz"
+echo "$WINEASIO_SHA256  wineasio.tar.gz" | sha256sum -c - >/dev/null || { echo "wineasio.tar.gz does not match its pinned sha256 $WINEASIO_SHA256" >&2; exit 1; }
+tar -xzf wineasio.tar.gz -C "$WORK"
 ASIO="$WORK/wineasio-$WINEASIO_VERSION"
-make -k -j"$(nproc)" $(for i in include/*.idl; do echo "${i%.idl}.h"; done) >/dev/null 2>&1 || true   # the headers that have a rule
+make -k -j"$(nproc)" $(for i in include/*.idl; do echo "${i%.idl}.h"; done) >/dev/null 2>&1 || true   # the headers that have a rule; -k goes on past those that have none
+for H in unknwn wtypes objidl oaidl objbase; do   # what WineASIO's sources include; a failed generation must stop here, not at its compile
+    [ -f "include/$H.h" ] || { echo "wine headers: include/$H.h was not generated" >&2; exit 1; }
+done
 make -j"$(nproc)" libs/winecrt0/libwinecrt0.a libs/uuid/libuuid.a dlls/odbc32/libodbc32.a dlls/ole32/libole32.a \
     dlls/winmm/libwinmm.a dlls/advapi32/libadvapi32.a dlls/kernel32/libkernel32.a dlls/ntdll/libntdll.a >/dev/null
 mkdir -p "$ASIO/build"
