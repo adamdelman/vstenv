@@ -326,6 +326,23 @@ giving 3.4 ms per icon. Left: a new D3D11 device per icon costs another ~32 ms
 (wined3d device/context creation), only if Cubase does that. Named `zz` to sort
 after `d2d1-zz-layer-opacity-mask` (same file).
 
+## dxgi-zz-shared-wined3d-<version>.patch
+
+`D3D11CreateDevice` makes a new DXGI factory, and every factory made its own
+wined3d object, which probes the GL adapter again (a throw-away GL context,
+capability tables, format probing). Cubase 14 creates a D3D11 device per
+context-menu icon. In a traced creation 30 of 32 ms were
+`wined3d_adapter_gl_create`; `D3D11CreateDevice` went from 29 ms to 8.5 ms with
+the patch (host runtime, Xvfb, so llvmpipe; the probing is driver work, the
+number on NVIDIA will differ). One wined3d object is now kept per process
+(created on first use, never released, one reference per factory) and replaced
+when the virtual screen rectangle changes, since the outputs are read at
+creation. The first device in a process still pays about 220 ms (driver load
+and GL context, about 140 ms of it the first GL context; software-GL
+specific in size). What is left per device (about 8 ms create, 8 ms release, 20 ms
+first draw, 12 ms first readback on a fresh device) is the GL context and
+wined3d's per-device GLSL program cache.
+
 ## sensapi-isnetworkalive-last-error-<version>.patch
 
 KORG Software Pass opened on "No Internet Connection" with the network working.
@@ -464,6 +481,22 @@ menu mode, before posting `SC_CLOSE`; its `WM_CANCELMODE` is queued first, so
 the menu ends before the close is handled. Only `winex11.so` is rebuilt. Named
 `zz` so it sorts after `winex11-xdnd-deferred-drop` (same file, later hunk is
 independent). Untested in Cubase at the time of writing.
+
+## win32u.so (rebuilt unix library, no patch of its own)
+
+`dcomp-swapchain-present-<version>.patch` changes `dlls/win32u/menu.c` so that a
+32-bit menu bitmap is drawn with `NtGdiAlphaBlend` (per-pixel alpha); a plain
+BitBlt turns the transparent, premultiplied pixels of Cubase's context-menu
+icons into black squares. But the menu, window and GDI code lives in the unix
+half of win32u, `win32u.so`; the PE `win32u.dll` is only syscall thunks. The
+build script rebuilt only the PE half, so the hunk never reached the runtime
+and every icon stayed a black square even with the Direct2D layer fix
+(`d2d1-zz-layer-opacity-mask`). `scripts/build-wine-fixes.sh` now also builds
+`win32u.so` (in the same X-enabled second configure as `winex11.so`). That
+configure no longer passes `--without-freetype --without-fontconfig`: without
+them the rebuilt `win32u.so` has no font support (it came out 2.3 MB against the
+stock 2.9 MB). The script checks for both
+SONAME defines. Not yet confirmed in a Cubase run.
 
 ## WineASIO (no patch: built from upstream)
 
