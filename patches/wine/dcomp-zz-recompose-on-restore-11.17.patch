@@ -1,60 +1,74 @@
-dcomp: put the last composed frame back when a minimized window comes back
+dcomp: keep the last composed frame, never re-read the window after the first
 
 Restoring a minimized Cubase 14 window left parts of it black: the transport
-row, the track area and the channel and inspector bodies. When a window is
-minimized X drops its content. The compositor copied the window's content
-into its off-screen frame at the start of every tick, to keep what the program
-paints on the window itself, so after the restore that copy was black and the
-visuals drawn over it only covered the panels that had new content (the ones
-Cubase repainted).
+row, the track area and the channel and inspector bodies. X drops a window's
+content when it is unmapped. The compositor copied the window's content into
+its off-screen frame at the start of every tick, to keep what no visual draws,
+so a tick after a restore started from black and only the visuals with
+content showed over it.
 
-While the top level is minimized the target now remembers that its off-screen
-frame holds the last composed frame, and the first tick after the restore
-starts from that frame instead of reading the window, then draws every visual
-and writes the whole frame to the window. A frame whose size changed is made
-new and starts from the window as before.
+The frame is now the compositor's own state: the window is read once, for the
+first frame, and every later tick starts from the previous frame. A minimize
+and restore can be over between two ticks, and the size passes through odd
+values around it (a frame that changed size used to be thrown away), so the
+frame is also carried over, copied into the new bitmap, when the size changes.
 
 --- a/dlls/dcomp/device.c	2026-11-25 13:26:54.199345127 +0200
-+++ b/dlls/dcomp/device.c	2026-11-25 13:26:26.286492403 +0200
-@@ -869,6 +869,7 @@
-         DeleteObject(target->back_bitmap);
-         target->back_bitmap = NULL;
++++ b/dlls/dcomp/device.c	2026-11-25 13:31:08.686618072 +0200
+@@ -851,6 +851,7 @@
+     HDC window_dc;
+     RECT client;
+     HRESULT hr;
++    BOOL first_frame = FALSE;
+     int w, h;
+ 
+     GetClientRect(target->hwnd, &client);
+@@ -866,13 +867,33 @@
      }
-+    if (!target->back_bitmap) target->keep_back = FALSE;
+     if (target->back_bitmap && (target->back_width != w || target->back_height != h))
+     {
+-        DeleteObject(target->back_bitmap);
+-        target->back_bitmap = NULL;
++        /* The size passes through odd values around a minimize and a restore: the frame is
++         * carried over, not thrown away. */
++        HBITMAP new_bitmap = CreateCompatibleBitmap(window_dc, w, h);
++        HDC old_dc = CreateCompatibleDC(window_dc);
++
++        if (new_bitmap && old_dc)
++        {
++            HBITMAP old_old = SelectObject(old_dc, target->back_bitmap);
++            HBITMAP old_new = SelectObject(back_dc, new_bitmap);
++
++            BitBlt(back_dc, 0, 0, w, h, old_dc, 0, 0, SRCCOPY);
++            SelectObject(back_dc, old_new);
++            SelectObject(old_dc, old_old);
++            DeleteObject(target->back_bitmap);
++            target->back_bitmap = new_bitmap;
++            target->back_width = w;
++            target->back_height = h;
++            new_bitmap = NULL;
++        }
++        if (new_bitmap) DeleteObject(new_bitmap);
++        if (old_dc) DeleteDC(old_dc);
+     }
      if (!target->back_bitmap && (target->back_bitmap = CreateCompatibleBitmap(window_dc, w, h)))
      {
          target->back_width = w;
-@@ -883,7 +884,11 @@
+         target->back_height = h;
++        first_frame = TRUE;
+     }
+     if (!target->back_bitmap)
+     {
+@@ -883,7 +904,11 @@
      }
  
      old_bitmap = SelectObject(back_dc, target->back_bitmap);
 -    BitBlt(back_dc, 0, 0, w, h, window_dc, 0, 0, SRCCOPY);
-+    /* After a minimize the window's X content is gone (black); what the program painted onto it
-+     * itself is only in the last frame, which is put back instead of the window's content. */
-+    if (!target->keep_back)
++    /* The window is read once, for what the program painted onto it itself.  X drops a
++     * window's content when it is unmapped, and a minimize and restore can be over between two
++     * ticks, so later ticks start from the last frame instead of from the window. */
++    if (first_frame)
 +        BitBlt(back_dc, 0, 0, w, h, window_dc, 0, 0, SRCCOPY);
-+    target->keep_back = FALSE;
      hr = do_composite(target, visual, 0.0f, 0.0f);
      BitBlt(window_dc, 0, 0, w, h, back_dc, 0, 0, SRCCOPY);
  
-@@ -937,7 +942,10 @@
-             /* Nothing to show, and the window's surface is not the program's to keep up
-              * while it is minimized; the first tick after the restore draws it all. */
-             if (IsIconic(GetAncestor(target->hwnd, GA_ROOT)))
-+            {
-+                target->keep_back = target->back_bitmap != NULL;
-                 continue;
-+            }
- 
-             visual = impl_from_IDCompositionVisual(target->root);
-             composite_target_tick(target, visual);
---- a/dlls/dcomp/dcomp_private.h	2026-11-25 13:26:54.199955237 +0200
-+++ b/dlls/dcomp/dcomp_private.h	2026-11-25 13:26:26.286256381 +0200
-@@ -78,6 +78,7 @@
-     HWND hwnd;
-     HANDLE shared_visual_handle;
-     HBITMAP back_bitmap;           /* off-screen frame the compositor draws a tick into, kept while the size holds */
-+    BOOL keep_back;                /* the window was minimized: its X content is gone, the last frame in back_bitmap is the one to restore */
-     int back_width, back_height;
-     struct list entry;
-     LONG ref;

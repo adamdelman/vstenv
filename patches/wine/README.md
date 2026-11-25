@@ -569,15 +569,16 @@ After a minimize and restore of Cubase 14's project window (with
 `dcomp-zz-compose-thread-keeps-running` and `winex11-zz-wm-restore-follows`)
 the transport row, the track area and the channel and inspector bodies were
 black. X drops the window's content when it is unmapped, and the compositor
-read the window into its off-screen frame at every tick, so what only the
-program painted on the window itself (or what visuals with no new content
-would have kept) was lost. The first tick after the restore now starts from
-the last composed frame, kept in the target's frame bitmap while the window is
-minimized. Test (MinGW program, headless KWin Xwayland :3: a GDI-painted window
-plus a composition-swapchain visual, minimize by WM_CHANGE_STATE, restore by
-_NET_ACTIVE_WINDOW, whole window compared before and after): 84111 pixels
-differed with the compose-thread dcomp, 0 with this patch. The same loss
-happens with the old winex11, so the winex11 patch only exposed it. Not
-confirmed in Cubase itself; if parts stay blank, a visual's own surface lost
-its content (Trim on a virtual surface) and needs tracing with `+dcomp`.
-Layers on `dcomp-zz-swapchain-alpha-blend`.
+read the window into its off-screen frame at every tick, so a tick after the
+restore began from black. A first version kept the frame only when a tick saw
+the window minimized; in Cubase it worked for the first cycle only (the
+cycles are fast, the size passes through odd values and the frame was thrown
+away on every size change). Now the window is read once, for the first frame,
+and the frame is carried over on resize. Test (MinGW program, headless KWin
+Xwayland :3: a GDI-painted window painted once plus a composition-swapchain
+visual, WM_CHANGE_STATE Iconic then _NET_ACTIVE_WINDOW after 0.05, 0.1, 0.3, 1
+and 3 s, whole window compared to the first snapshot): 84111 pixels differ in
+every cycle with the compose-thread dcomp, 0 with this patch. Limit: what a
+program paints onto the top-level window itself after the first frame is
+overwritten by the retained frame (child windows are not touched). Layers on
+`dcomp-zz-swapchain-alpha-blend`.
