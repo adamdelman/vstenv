@@ -512,3 +512,35 @@ Wine runs on the host, so it dlopens the host's `libjack.so.0`: PipeWire's
 (`pipewire-jack`) or JACK's own must be installed there. In Cubase: Studio > Studio
 Setup > Audio System > ASIO Driver = WineASIO; the buffer size is set in its
 Control Panel button there.
+
+## dcomp-zz-compose-thread-keeps-running-<version>.patch
+
+Cubase 14, after minimize and restore, kept the window as it was when it
+went away: no redraw until something else forced one. The compositor thread
+of `dcomp-steinberg` ends the first time a tick draws nothing (a failed
+tick, or a target with no root) and only `IDCompositionDevice::Commit()`
+starts it again, which a program with nothing new to say never calls. The
+patch counts a target for as long as its window exists, regardless of the
+tick's result, so the thread ends only when all windows of the device are
+gone; and it skips drawing while the target's top-level window is
+minimized or destroyed (the first tick after the restore redraws every
+visual). Candidate fix from reading the source; built, not yet run in Cubase.
+Layers on `dcomp-swapchain-present-offscreen`.
+
+## winex11-zz-wm-restore-follows-<version>.patch
+
+Restoring the minimized Cubase 14 window from the taskbar took many clicks.
+A restore by the window manager arrives as an unexpected WM_STATE
+NormalState; the Win32 window only loses WS_MINIMIZE later, when the posted
+WM_WINE_WINDOW_STATE_CHANGED is handled. Any SetWindowPos in between makes
+`X11DRV_WindowPosChanged` derive IconicState from the still-minimized style
+and `XIconifyWindow` the window again. The patch sets `wm_restored` on such a
+restore and derives NormalState while the style still has WS_MINIMIZE. It
+also activates after the maximized restore (SC_MAXIMIZE branch, via the
+foreground out-parameter) and restores a disabled window directly with
+`ShowWindow(SW_RESTORE)`, since WM_SYSCOMMAND is ignored by disabled windows
+and the window stayed WS_MINIMIZE with X showing it Normal. Upstream master
+has no change here. Test (MinGW program, headless KWin): the disabled-while-
+minimized case reproduces and is fixed; the re-iconify race did not reproduce
+in a plain run, so that part is from reading the source. Layers on
+`winex11-zz-close-ends-menu`; not yet confirmed in Cubase.
