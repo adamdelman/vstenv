@@ -381,7 +381,7 @@ re-applying the hunks and renaming the file; `winefixes.wine_version()` picks
 the asset by the pinned build's version. Written for Wine 11.17, verified with
 HALion Sonic 7 on 2026-09-26; a candidate for upstreaming to wine-staging.
 
-## dcomp-composite-offscreen-<version>.patch
+## dcomp-swapchain-present-offscreen-<version>.patch
 
 Cubase 14's project cursor line (the line under the downward triangle in the
 ruler, down the track area) flickered, with the project stopped. A 60 fps
@@ -418,3 +418,17 @@ gets the answer. A move still waits for the drop's result, since the source
 deletes what it moved when it sees `XdndFinished`. Only `winex11.so` is rebuilt.
 Verified with an mp3 dragged from Dolphin onto a Cubase 14 audio track on
 wine-staging 11.17; a candidate for upstreaming to Wine.
+
+## winex11-zz-close-ends-menu-<version>.patch
+
+With a context menu open in Cubase 14 (right-click in the track area), clicking
+the window manager's close button showed "Do you want to save this project?"
+while the menu was still open, and the dialog could not be clicked: the menu
+kept the capture (Esc freed it). The driver turns `WM_DELETE_WINDOW` into a
+posted `WM_SYSCOMMAND`/`SC_CLOSE`; the menu's modal loop dispatches it and the
+dialog runs nested inside the loop. On Windows the click on the close button
+ends the menu first. The driver now calls `NtUserEndMenu` when the thread is in
+menu mode, before posting `SC_CLOSE`; its `WM_CANCELMODE` is queued first, so
+the menu ends before the close is handled. Only `winex11.so` is rebuilt. Named
+`zz` so it sorts after `winex11-xdnd-deferred-drop` (same file, later hunk is
+independent). Untested in Cubase at the time of writing.
