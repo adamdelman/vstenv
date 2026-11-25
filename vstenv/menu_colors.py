@@ -74,3 +74,11 @@ def apply(p: Prefix, kdeglobals: Path | None = None) -> bool:
         cp = p.run(["reg", "add", KEY, "/v", k, "/t", "REG_SZ", "/d", v, "/f"], timeout=60)
         if cp.returncode != 0: return False          # not recorded, so the next start tries again
     state.write_text(json.dumps(want)); return True
+
+def reset(p: Prefix) -> bool:
+    """Setting turned off: delete the three values so Wine's built-in colours apply again.
+    Only when apply() wrote them (its state file). True when Wine was run."""
+    state = p.drive_c / STATE
+    if not state.exists(): return False
+    for k in ("Menu", "MenuBar", "MenuText"): p.run(["reg", "delete", KEY, "/v", k, "/f"], timeout=60)   # already gone: nothing to undo
+    state.unlink(); return True

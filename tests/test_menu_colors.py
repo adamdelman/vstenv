@@ -64,6 +64,15 @@ class MenuColorsTest(unittest.TestCase):
             recipes.apply_program(p, "x.exe", {"desktop_menu_colors": "on"})
             ap.assert_called_once()
 
+    def test_turning_it_off_deletes_the_values_once(self):
+        self.kde.write_text(KDE); p = FakePrefix(self.d); menu_colors.apply(p, self.kde); p.calls.clear()
+        with mock.patch.object(recipes, "overrides_key", return_value="K"):
+            p.reg_query = lambda k: {}
+            self.assertEqual(recipes.apply_program(p, "x.exe", {}), ["desktop_menu_colors=off"])
+            self.assertEqual(p.calls, [["reg", "delete", menu_colors.KEY, "/v", k, "/f"] for k in ("Menu", "MenuBar", "MenuText")])
+            self.assertFalse((self.d / menu_colors.STATE).exists())
+            p.calls.clear(); recipes.apply_program(p, "x.exe", {}); self.assertEqual(p.calls, [])
+
 class GnomeTest(unittest.TestCase):
     def setUp(self):
         self.d = Path(tempfile.mkdtemp()); self.kde = self.d / "kdeglobals"

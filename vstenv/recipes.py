@@ -243,6 +243,9 @@ def apply_program(p: Prefix, exe_name: str, settings: dict, reporter=None, exe_p
     if settings.get("desktop_menu_colors") == "on":
         from . import menu_colors
         if menu_colors.apply(p): done.append("desktop_menu_colors=on")
+    elif (p.drive_c / "vstenv-menu-colors.json").exists():
+        from . import menu_colors
+        if menu_colors.reset(p): done.append("desktop_menu_colors=off")
     if done:
         r.step(f"Recipe for {exe_name}"); r.ok(", ".join(done))
     return done
