@@ -1,0 +1,60 @@
+dcomp: put the last composed frame back when a minimized window comes back
+
+Restoring a minimized Cubase 14 window left parts of it black: the transport
+row, the track area and the channel and inspector bodies. When a window is
+minimized X drops its content. The compositor copied the window's content
+into its off-screen frame at the start of every tick, to keep what the program
+paints on the window itself, so after the restore that copy was black and the
+visuals drawn over it only covered the panels that had new content (the ones
+Cubase repainted).
+
+While the top level is minimized the target now remembers that its off-screen
+frame holds the last composed frame, and the first tick after the restore
+starts from that frame instead of reading the window, then draws every visual
+and writes the whole frame to the window. A frame whose size changed is made
+new and starts from the window as before.
+
+--- a/dlls/dcomp/device.c	2026-11-25 13:26:54.199345127 +0200
++++ b/dlls/dcomp/device.c	2026-11-25 13:26:26.286492403 +0200
+@@ -869,6 +869,7 @@
+         DeleteObject(target->back_bitmap);
+         target->back_bitmap = NULL;
+     }
++    if (!target->back_bitmap) target->keep_back = FALSE;
+     if (!target->back_bitmap && (target->back_bitmap = CreateCompatibleBitmap(window_dc, w, h)))
+     {
+         target->back_width = w;
+@@ -883,7 +884,11 @@
+     }
+ 
+     old_bitmap = SelectObject(back_dc, target->back_bitmap);
+-    BitBlt(back_dc, 0, 0, w, h, window_dc, 0, 0, SRCCOPY);
++    /* After a minimize the window's X content is gone (black); what the program painted onto it
++     * itself is only in the last frame, which is put back instead of the window's content. */
++    if (!target->keep_back)
++        BitBlt(back_dc, 0, 0, w, h, window_dc, 0, 0, SRCCOPY);
++    target->keep_back = FALSE;
+     hr = do_composite(target, visual, 0.0f, 0.0f);
+     BitBlt(window_dc, 0, 0, w, h, back_dc, 0, 0, SRCCOPY);
+ 
+@@ -937,7 +942,10 @@
+             /* Nothing to show, and the window's surface is not the program's to keep up
+              * while it is minimized; the first tick after the restore draws it all. */
+             if (IsIconic(GetAncestor(target->hwnd, GA_ROOT)))
++            {
++                target->keep_back = target->back_bitmap != NULL;
+                 continue;
++            }
+ 
+             visual = impl_from_IDCompositionVisual(target->root);
+             composite_target_tick(target, visual);
+--- a/dlls/dcomp/dcomp_private.h	2026-11-25 13:26:54.199955237 +0200
++++ b/dlls/dcomp/dcomp_private.h	2026-11-25 13:26:26.286256381 +0200
+@@ -78,6 +78,7 @@
+     HWND hwnd;
+     HANDLE shared_visual_handle;
+     HBITMAP back_bitmap;           /* off-screen frame the compositor draws a tick into, kept while the size holds */
++    BOOL keep_back;                /* the window was minimized: its X content is gone, the last frame in back_bitmap is the one to restore */
+     int back_width, back_height;
+     struct list entry;
+     LONG ref;
