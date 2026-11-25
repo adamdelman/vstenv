@@ -502,3 +502,19 @@ patch compiles once per process (critical section, blobs shared by reference),
 giving 3.4 ms per icon. Left: a new D3D11 device per icon costs another ~32 ms
 (wined3d device/context creation), only if Cubase does that. Named `zz` to sort
 after `d2d1-zz-layer-opacity-mask` (same file).
+## d2d1-zzz-multithread-protect-<version>.patch
+
+Cubase 14 hung when it opened a project with DXVK as `d3d11`. The hung process had one
+worker thread inside `d2d_device_context_draw` (`SwapDeviceContextState`) that had raised an
+access violation in DXVK's `d3d11.dll`, and Cubase's exception handler then blocked in `dbghelp`
+while holding d2d1's factory lock, so the 12 other image-generator threads queued behind it. The
+faulting instruction appends a command to DXVK's command-stream chunk (`mov 0x8(%rdx),%r8` with
+`rdx` = the context's current chunk = NULL): two threads were inside the same immediate context at
+once. Cubase's threads use a multi-threaded D2D factory, whose lock covers drawing only: bitmap
+`Map`, `Unmap` and copies, and the DirectComposition compositor thread, reach the context without it.
+Wine's own `d3d11` tolerates that, DXVK does not unless multithread protection is on. A device
+context of a multi-threaded factory now turns `ID3D11Multithread` protection on, and
+`d2d_device_context_draw` also holds the device lock, so the swap of the context state is atomic.
+Test: with this patch Cubase opens its Hub and project window and the hang signature (a thread in
+`dbghelp`, threads queued in `d2d_device_context_draw`) is gone, in three runs; without it the hang
+happened in every run.
