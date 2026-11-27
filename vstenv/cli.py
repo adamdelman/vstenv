@@ -308,10 +308,15 @@ def cmd_run(a):
     if a.debug and a.debug not in debugrun.TOPIC_NAMES: sys.exit(f"--debug takes one of: {', '.join(debugrun.TOPIC_NAMES)}")
     prog = programs.find(p, a.name)
     if a.debug: return _run_debug(p, prog, a.debug, r)
+    t0 = time.time()
     try: proc = programs.run(p, prog, r)
     except RuntimeError as e: sys.exit(str(e))
+    v = vendors.for_program(prog)
+    if v is None or not v.is_manager_program(prog): v = None
     if a.wait:
-        proc.wait(); setup.after_change(p, r)           # the program may have installed plugins
+        proc.wait()
+        if v is not None: v.finish_installs(p, r, since=t0)   # as `manager launch --wait` and the GUI do
+        setup.after_change(p, r)                        # the program may have installed plugins
     elif getattr(proc, "vstenv_watch", None) is not None:
         proc.vstenv_watch.join()     # the vendor is observing the program (e.g. rescuing
                                      # its installs); exiting now would kill that thread
@@ -322,6 +327,10 @@ def cmd_run(a):
         # Central), and they are bridged as they appear, then once more at exit.
         _join_window_watch(proc)
         programs.watch_plugins(p, proc, lambda: setup.after_change(p, r))
+        # A vendor manager started this way (the Download Assistant) leaves the
+        # installs it could not finish under Wine (MediaBay's untrusted prerun
+        # script) staged; finish them now it is closed.
+        if v is not None: v.finish_installs(p, r, since=t0)
         setup.after_change(p, r)
 
 def _run_debug(p, prog, topic, r):
