@@ -43,8 +43,9 @@ TOPICS = {
 TOPIC_NAMES = [*TOPICS, "all"]
 
 def channels(topic: str) -> str:
+    """The topic's channels, then any WINEDEBUG the user set (later entries win in Wine)."""
     extra = [c for cs in TOPICS.values() for c in cs] if topic == "all" else TOPICS[topic]
-    return ",".join(CRASH + extra)
+    return ",".join(CRASH + extra + [c for c in os.environ.get("WINEDEBUG", "").split(",") if c])
 
 def debug_env(topic: str, d: Path) -> dict:
     """The variables a debug run adds to the program's environment."""
@@ -88,8 +89,10 @@ def restore_crash_handler(p, saved: dict):
 # to 15 characters) in this prefix, samples its threads every 3 s, and stops once
 # the program has come and gone. Each sample lists the 12 threads that used the
 # most CPU since the one before (a busy loop stands out; a deadlock is all zeros),
-# with the thread's total too. The stat fields are counted after "(comm) ", which
-# may hold spaces: utime and stime (fields 14 and 15) are then $12 and $13.
+# with the thread's total and its scheduling (FIFO:70 is realtime priority 70,
+# OTHER:0 normal at nice 0). The stat fields are counted after "(comm) ", which may
+# hold spaces: utime, stime (14, 15), nice (19), rt_priority and policy (40, 41)
+# are then $12, $13, $17, $38 and $39.
 SAMPLER = r"""pid= prev=
 while :; do
   state=$(sed 's/.*) //' "/proc/$pid/stat" 2>/dev/null | cut -c1)     # gone, or a zombie (Z): ended
@@ -102,11 +105,12 @@ while :; do
   fi
   if [ -n "$pid" ]; then
     cur=$(for t in /proc/$pid/task/*; do
-      echo "${t##*/} $(sed 's/.*) //' "$t/stat" 2>/dev/null | awk '{print $12+$13}') $(tr ' ' _ < "$t/comm" 2>/dev/null) $(cat "$t/wchan" 2>/dev/null)"
+      echo "${t##*/} $(sed 's/.*) //' "$t/stat" 2>/dev/null | awk '{split("OTHER FIFO RR BATCH ISO IDLE DEADLINE", pol, " ")
+        print $12 + $13, pol[$39 + 1] ":" ($39 == 1 || $39 == 2 ? $38 : $17)}') $(tr ' ' _ < "$t/comm" 2>/dev/null) $(cat "$t/wchan" 2>/dev/null)"
     done)
-    { echo "### $(date +%T) pid $pid: cpu-ticks-since-last total tid name wchan"
+    { echo "### $(date +%T) pid $pid: cpu-ticks-since-last total tid name sched wchan"
       printf '%s\n' "$cur" | PREV="$prev" awk 'BEGIN { n = split(ENVIRON["PREV"], l, "\n"); for (i = 1; i <= n; i++) { split(l[i], f, " "); was[f[1]] = f[2] } }
-        NF >= 2 { print $2 - ($1 in was ? was[$1] : 0), $2, $1, $3, $4 }' | sort -rn | head -12; } >> "$VSTENV_OUT"
+        NF >= 3 { print $2 - ($1 in was ? was[$1] : 0), $2, $1, $4, $3, $5 }' | sort -rn | head -12; } >> "$VSTENV_OUT"
     prev=$cur
   fi
   sleep 3
@@ -156,12 +160,16 @@ def sysinfo(p, topic: str) -> str:
     add("wine", p.build.version)
     add("wine-fixes", fixes)
     add("dxvk", lambda: (lambda s: f"{s['version'] or 'not installed'} (wanted {s['wanted']})")(dxvk.status(p)))
-    add("DXVK_CONFIG", lambda: p.wine_env().get("DXVK_CONFIG"))
+    # wine_env leaves a DXVK_CONFIG the user set to the environment the program inherits
+    add("DXVK_CONFIG", lambda: f"{os.environ['DXVK_CONFIG']} (yours)" if "DXVK_CONFIG" in os.environ else p.wine_env().get("DXVK_CONFIG"))
     return "\n".join(lines) + "\n"
 
 def run(p, prog, topic="crash", reporter=None) -> Path:
     """Run `prog` with debug logging until it exits; returns the debug directory."""
     from . import programs
+    exe = prog.exe.rsplit("\\", 1)[-1] if prog.exe else ""
+    # a second launch hands over to the running copy, which has none of the logging
+    if exe and p.is_running(exe): raise RuntimeError(f"{prog.name} is already running: close it, then start the debug run again")
     d = debug_dir(prog.name); d.mkdir(parents=True, exist_ok=True)
     (d / "sysinfo.txt").write_text(sysinfo(p, topic))
     saved = set_crash_handler(p)
@@ -169,7 +177,7 @@ def run(p, prog, topic="crash", reporter=None) -> Path:
     sampler = None
     try:
         proc = programs.run(p, prog, reporter)
-        if prog.exe: sampler = start_sampler(p, prog.exe.rsplit("\\", 1)[-1], d / "threads.log")
+        if exe: sampler = start_sampler(p, exe, d / "threads.log")
         # shortcut: waits for the process started, not for programs it hands off
         # to; a launcher that exits at once ends the debug session early.
         try: proc.wait()
