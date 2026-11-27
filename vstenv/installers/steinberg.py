@@ -137,7 +137,8 @@ def install(p: Prefix, pkg: Path, reporter=None) -> dict:
         if s.prerun: r.log(f"{s.title}: skipping prerun script(s) {', '.join(s.prerun)} (only stop running Steinberg processes)")
         done, failed = [], []
         for name in s.msis:
-            msi = _find_msi(d, name, getattr(s, "search", []))
+            # Cubase 16 keeps setup.xml in "Additional Content/Installer Data", beside (not above) its MSI's folder
+            msi = _find_msi(d, name, getattr(s, "search", [])) or next(work.rglob(name), None)
             r.step(f"Installing {name}")
             if msi is None: r.fail("not in the package"); failed.append(name); continue
             have = _already_newer(p, msi)
