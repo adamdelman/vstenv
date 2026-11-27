@@ -38,6 +38,9 @@ def run(p: wine.Prefix | None = None, on_check=None) -> list[Check]:
     c.append(Check("Wine modules find their host libraries", ok, detail, fix="install the named libraries with your package manager (optional modules only lose that feature)"))
     c.append(Check("prefix", p.exists, str(p.path), fix="vstenv setup"))
     if not p.exists: return c
+    try:                    # a debug run that died left Wine's crash handler on
+        from . import debugrun; debugrun.restore_leftover(p)
+    except Exception: pass
     try:
         exes = dcomp.program_exes(p); missing = [e for e in exes if not dcomp.program_fix_applied(p, e)]
         c.append(Check("DirectComposition programs run on Wine's own Direct3D", not missing,
