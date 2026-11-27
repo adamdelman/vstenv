@@ -43,8 +43,9 @@ TOPICS = {
 TOPIC_NAMES = [*TOPICS, "all"]
 
 def channels(topic: str) -> str:
+    """The topic's channels, then any WINEDEBUG the user set (later entries win in Wine)."""
     extra = [c for cs in TOPICS.values() for c in cs] if topic == "all" else TOPICS[topic]
-    return ",".join(CRASH + extra)
+    return ",".join(CRASH + extra + [c for c in os.environ.get("WINEDEBUG", "").split(",") if c])
 
 def debug_env(topic: str, d: Path) -> dict:
     """The variables a debug run adds to the program's environment."""

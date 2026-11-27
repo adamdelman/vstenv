@@ -20,6 +20,7 @@ class DebugRunTest(unittest.TestCase):
     def setUp(self):
         self.d = Path(tempfile.mkdtemp())
         p = mock.patch.object(paths, "LOGS", self.d); p.start(); self.addCleanup(p.stop)
+        p = mock.patch.dict(os.environ); p.start(); self.addCleanup(p.stop); os.environ.pop("WINEDEBUG", None)
 
     def test_dir_name(self):
         t = time.mktime((2026, 11, 27, 9, 5, 7, 0, 0, -1))
@@ -40,6 +41,13 @@ class DebugRunTest(unittest.TestCase):
         e = debugrun.debug_env("graphics", self.d)
         self.assertEqual((e["DXVK_LOG_LEVEL"], e["DXVK_LOG_PATH"]), ("info", str(self.d)))
         self.assertIn("DXVK_LOG_PATH", debugrun.debug_env("all", self.d))
+
+    def test_users_winedebug_is_added(self):
+        with mock.patch.dict(os.environ, {"WINEDEBUG": "+locale,warn+ole"}):
+            self.assertTrue(debugrun.channels("crash").endswith(",fixme-all,+locale,warn+ole"))
+            self.assertIn("+locale", debugrun.debug_env("graphics", self.d)["WINEDEBUG"])
+        with mock.patch.dict(os.environ, {"WINEDEBUG": ""}):
+            self.assertTrue(debugrun.channels("crash").endswith("fixme-all"))
 
     def test_crash_handler_set_and_restored(self):
         key = rf"HKLM\Software\{debugrun.AEDEBUG}"
