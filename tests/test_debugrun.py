@@ -121,6 +121,15 @@ class DebugRunTest(unittest.TestCase):
         self.assertIn("wine          ? (OSError)", text); self.assertIn("wine-fixes    none", text)
         self.assertIn("ntsync        usable=True", text); self.assertIn("dxvk          ? (RuntimeError)", text)
 
+    def test_sysinfo_shows_the_users_dxvk_config(self):
+        p = mock.Mock(); p.wine_env.return_value = {"DXVK_CONFIG": "ours"}
+        with mock.patch.object(debugrun.host, "sh", return_value=""), mock.patch("vstenv.ntsync.status", return_value={}), \
+             mock.patch("vstenv.winefixes.status", return_value={"files": []}), mock.patch("vstenv.dxvk.status", side_effect=RuntimeError):
+            with mock.patch.dict(os.environ):
+                os.environ.pop("DXVK_CONFIG", None); self.assertIn("DXVK_CONFIG   ours\n", debugrun.sysinfo(p, "crash"))
+            with mock.patch.dict(os.environ, {"DXVK_CONFIG": "d3d11.x = 1"}):
+                self.assertIn("DXVK_CONFIG   d3d11.x = 1 (yours)", debugrun.sysinfo(p, "crash"))
+
 class CliTest(unittest.TestCase):
     def run_cli(self, *argv):
         with mock.patch.object(cli, "_prefix"), mock.patch.object(cli.programs, "find", side_effect=lambda p, n: n), \

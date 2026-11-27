@@ -156,7 +156,8 @@ def sysinfo(p, topic: str) -> str:
     add("wine", p.build.version)
     add("wine-fixes", fixes)
     add("dxvk", lambda: (lambda s: f"{s['version'] or 'not installed'} (wanted {s['wanted']})")(dxvk.status(p)))
-    add("DXVK_CONFIG", lambda: p.wine_env().get("DXVK_CONFIG"))
+    # wine_env leaves a DXVK_CONFIG the user set to the environment the program inherits
+    add("DXVK_CONFIG", lambda: f"{os.environ['DXVK_CONFIG']} (yours)" if "DXVK_CONFIG" in os.environ else p.wine_env().get("DXVK_CONFIG"))
     return "\n".join(lines) + "\n"
 
 def run(p, prog, topic="crash", reporter=None) -> Path:
