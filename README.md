@@ -10,9 +10,9 @@ installer you downloaded. It sets up and repairs the Windows compatibility layer
 (Wine) for you, along with the many fixes plugins need under it, so you never
 have to deal with it yourself.
 
-It works with Native Instruments (Native Access, Kontakt and its libraries), IK
-Multimedia, Steinberg, KORG, Arturia, iZotope, Softube, Audio Modeling, FabFilter,
-Soundtoys, Valhalla, Xfer Serum 2 and more. See [What works](#what-works).
+It works with Native Instruments, IK Multimedia, Steinberg, KORG, Arturia,
+iZotope, Softube, Audio Modeling, Minimal Audio, Orchestral Tools, Spitfire
+Audio, Roland, FabFilter, Soundtoys, Valhalla, Xfer and more. See [What works](#what-works).
 
 VST Environment is an independent, unofficial project. It isn't associated
 with, endorsed by or supported by any of the companies whose software it
@@ -189,6 +189,38 @@ loads these plugins too.
    [open an issue](https://github.com/dguedry/vstenv/issues) with it attached.
    The report leaves out your serial numbers, licence tokens and home folder path.
 
+### Reporting a crash or bug
+
+If a program crashes, hangs or draws wrong, run it once with debug logging,
+make the problem happen, then save a report. Use the program's name as the
+Programs tab shows it (part of the name is enough). Copy and paste these into a
+terminal:
+
+- **It crashes:**
+  ```sh
+  flatpak run --command=vstenv io.github.dguedry.vstenv run --debug "Cubase 14"
+  ```
+- **It hangs (stops responding):** start it as above. When it hangs, wait about
+  20 seconds, then run this in a second terminal:
+  ```sh
+  flatpak run --command=vstenv io.github.dguedry.vstenv hang-dump
+  ```
+- **It draws wrong, or windows, menus or focus misbehave:** use
+  `--debug=graphics` or `--debug=windows` in place of `--debug`
+  (`--debug=dragdrop` for drag and drop).
+
+Close the program when you're done, then save the report:
+
+```sh
+flatpak run --command=vstenv io.github.dguedry.vstenv report
+```
+
+It writes `vstenv-report-<date>-<time>.tar.gz` to your home folder.
+[Open an issue](https://github.com/dguedry/vstenv/issues) and attach it. The
+report has the app's logs and the last debug run's logs, with serial numbers,
+licence tokens and your home folder path removed. It also has a list of
+Cubase's crash dumps and the newest dump file. That file is included unchanged.
+
 Known problems and what to do:
 
 - **A store app's window stays white or black** (on some graphics drivers):
@@ -206,27 +238,41 @@ Known problems and what to do:
 
 ## What works
 
-| Vendor and product | Status |
-|---|---|
-| Native Instruments: Native Access, Kontakt 8, libraries, Komplete Kontrol | Works. Sign in, install, and play in a DAW |
-| IK Multimedia: IK Product Manager, SampleTank, Hammond B-3X | Works. Plugin windows need a graphics driver with Vulkan, which most have |
-| Steinberg: Download Assistant, HALion Sonic 7 | Works. Sign-in, installs, libraries, playing in a DAW |
-| Arturia: Software Center, Analog Lab V | Works |
-| iZotope: Product Portal, Ozone 9 | Works |
-| Softube: Softube Central, Heartbeat | Works |
-| Audio Modeling: Software Center, SWAM | Works. The Center reports its installs as failed; the app finishes them and tells you |
-| FabFilter, Soundtoys (with iLok), Valhalla, Xfer Serum 2 | Work as they are |
-| Gig Performer 5 | Works, as a standalone program |
-| Minimal Audio: Minimal Hub, Squash | Works |
-| Mercurial Tones: Mercurial Tones Hub, Janggo | Works. Install, sign in, and play in StageRig. The Hub is slow to respond when maximized; drag its edges to make it bigger instead |
-| KORG: KORG Software Pass, TRITON | Works. Sign in, install, and play in StageRig |
-| Orchestral Tools: SINE Player | Works. Sign-in fields don't show your typing (see above) |
-| Spitfire Audio app | Partly: it opens and browses; signing in and installing libraries not yet confirmed |
-| Rayzoon: Jamstix 4 | Partly: the editor opens in a DAW; playback not yet confirmed |
-| Roland Cloud Manager | Partly: it installs and opens; signing in not yet confirmed |
+Support goes by vendor, not by plugin: once a vendor's store app and one of its
+products work here, its other products almost always do too, because they share
+the same installer, licensing and plugin technology. So this list names vendors,
+not every plugin.
 
-Tested mostly on Linux Mint 22.3 and Ubuntu 24.04. Something you use isn't
-listed? Try it, and please report how it went.
+**Vendors with a store app.** Sign in, install and play in a DAW, as you would
+on Windows:
+
+| Vendor | Store app | Notes |
+|---|---|---|
+| Native Instruments | Native Access | Kontakt and its libraries, Komplete Kontrol, synths and effects |
+| IK Multimedia | IK Product Manager | Plugin windows need a graphics driver with Vulkan, which most have |
+| Steinberg | Steinberg Download Assistant | Cubase 14, instruments and their sound libraries. Cubase uses ASIO: see [Programs that only use ASIO](#programs-that-only-use-asio-cubase) |
+| Arturia | Arturia Software Center | |
+| iZotope | Product Portal | |
+| Softube | Softube Central | |
+| KORG | KORG Software Pass | |
+| Audio Modeling | Software Center | The Center reports its installs as failed; the app finishes them and tells you |
+| Minimal Audio | Minimal Hub | |
+| Mercurial Tones | Mercurial Tones Hub | |
+| Orchestral Tools | SINE Player | Sign-in fields don't show your typing (see above) |
+| Spitfire Audio | Spitfire Audio app | |
+| Roland | Roland Cloud Manager | |
+| Rayzoon | Jamstix 4 Manager | |
+
+**Vendors with plain installers.** Download the Windows installer and install
+it from the **Install** tab: FabFilter, Soundtoys, Valhalla DSP and Xfer Records
+work as they are, and so do most plugins that install this way. Plugins
+protected by iLok work too.
+
+**Standalone programs.** Gig Performer 5 works as a program of its own.
+
+Tested mostly on Linux Mint 22.3 and Ubuntu 24.04. A vendor you use isn't
+listed? It may well work: try it, and please
+[report how it went](https://github.com/dguedry/vstenv/issues), either way.
 
 ## Removing things and starting over
 
@@ -266,6 +312,17 @@ CPU and stutter less with it. Most distributions include the driver but don't tu
 it on. If yours is off, the app asks once whether to turn it on, which needs your
 password. You can also do it later from **Health → Speed up plugins**. Once it's
 on, close your DAW and open it again so Wine starts using the driver.
+
+### Programs that only use ASIO (Cubase)
+
+Some Windows programs only talk to sound cards through ASIO. They still make
+sound here: Cubase, for example, installs its own "Steinberg built-in ASIO
+Driver", which plays through your normal Linux audio. If you record or play live
+and need less delay or more channels, turn on **Health → Audio → WineASIO
+driver** and pick WineASIO as the ASIO driver in the program. Its settings are
+under **WineASIO settings** on the same page, and behind the driver's Control
+Panel button in the program. It needs PipeWire (with the `pipewire-jack` package)
+or JACK.
 
 ### Drag and drop
 

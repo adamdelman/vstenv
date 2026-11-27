@@ -24,8 +24,13 @@ REDACT = [
 
 def scrub(text: str) -> str:
     """Remove the identifying things vendors' software writes into its logs."""
-    home = str(Path.home())
-    text = text.replace(home, "~")
+    home = Path.home()
+    text = text.replace(str(home), "~")
+    # Wine's own forms of it: Z:\home\<user> and the prefix's C:\users\<user>,
+    # with backslashes doubled where a debug channel escapes them.
+    sep = r"[\\/]+"
+    text = re.sub(r"(?i)z:" + sep + sep.join(map(re.escape, home.parts[1:])) + r"(?![\w.-])", "~", text)
+    text = re.sub(r"(?i)(" + sep + r"users" + sep + r")" + re.escape(home.name) + r"(?![\w.-])", r"\1<user>", text)
     for rx, sub in REDACT: text = rx.sub(sub, text)
     return text
 
@@ -105,24 +110,46 @@ def summary(p: wine.Prefix | None = None) -> str:
     except Exception as e: w(f"(failed: {e})\n")
     return scrub(out.getvalue())
 
+DEBUG_TAIL = 20_000_000       # how much of each file of the newest `run --debug` directory
+CRASH_DUMPS = "Documents/Steinberg/CrashDumps"      # Cubase's minidumps, under the prefix's user
+DUMP_MAX = 20_000_000
+
+def tail(f: Path, n: int) -> str:
+    """The last n characters of a log, scrubbed. Reads only the end of a large
+    file; the margin lets a serial cut at the boundary still be recognized."""
+    with open(f, "rb") as fh:
+        fh.seek(max(0, fh.seek(0, 2) - n - 4096))
+        return scrub(fh.read().decode(errors="replace"))[-n:]
+
 def write_bundle(dest: Path | None = None, p: wine.Prefix | None = None) -> Path:
     """Write summary + logs to a .tar.gz the user can attach to a bug report."""
     from . import vendors
     paths.ensure_dirs()
     dest = Path(dest) if dest else Path.home() / f"{APP_NAME}-report-{time.strftime('%Y%m%d-%H%M%S')}.tar.gz"
     text = summary(p)
-    def add(t, name, body: str):
-        b = body.encode(); i = tarfile.TarInfo(name); i.size = len(b); i.mtime = int(time.time()); t.addfile(i, io.BytesIO(b))
+    def add(t, name, body: str | bytes):
+        b = body.encode() if isinstance(body, str) else body; i = tarfile.TarInfo(name); i.size = len(b); i.mtime = int(time.time()); t.addfile(i, io.BytesIO(b))
     with tarfile.open(dest, "w:gz") as t:
         add(t, "report/summary.txt", text)
         for log in sorted(paths.LOGS.glob("*")) if paths.LOGS.is_dir() else []:     # our logs, scrubbed; tail only
             if not log.is_file(): continue
-            try: add(t, f"report/logs/{log.name}", scrub(log.read_text(errors="replace"))[-400_000:])
+            try: add(t, f"report/logs/{log.name}", tail(log, 400_000))
             except OSError: continue
+        from . import debugrun
+        if (d := debugrun.newest_dir()) is not None:                               # the last `run --debug`
+            for f in sorted(d.iterdir()):
+                if f.is_file():
+                    try: add(t, f"report/{d.name}/{f.name}", tail(f, DEBUG_TAIL))
+                    except OSError: pass
         if p is not None and p.exists:                                             # the vendors' own logs
             for v in vendors.all():
                 for name, f in v.logs(p).items():
                     if f.is_file():
-                        try: add(t, f"report/logs/{v.id}-{name}", scrub(f.read_text(errors="replace"))[-400_000:])
+                        try: add(t, f"report/logs/{v.id}-{name}", tail(f, 400_000))
                         except OSError: pass
+            try: dumps = sorted((f for f in (p.user_dir / CRASH_DUMPS).glob("*.dmp") if f.is_file()), key=lambda f: f.stat().st_mtime)
+            except OSError: dumps = []
+            if dumps:                          # a minidump is binary: sent as it is, the newest only
+                add(t, "report/crashdumps.txt", "".join(f"{f.stat().st_size:>12}  {f.name}\n" for f in dumps))
+                if 0 < dumps[-1].stat().st_size < DUMP_MAX: add(t, f"report/crashdumps/{dumps[-1].name}", dumps[-1].read_bytes())
     return dest

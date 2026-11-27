@@ -452,7 +452,7 @@ thing more: a prefix that records its wine in `<prefix>/wineloader` is run with
 that wine. Setup writes the record. Every other prefix (`~/.wine`, Proton, a
 Bottles bottle) has no record and behaves exactly as upstream; an explicit
 `WINELOADER` still wins; uninstall the app and the launcher falls back to `wine`.
-So nothing is placed in `~/.local/bin`, no session variable is set, and a Wine
+So no `wine` is placed in `~/.local/bin`, no session variable is set, and a Wine
 you already have is never touched.
 
 **Wine runs on the host, even from the Flatpak.** wineserver addresses its
@@ -573,9 +573,22 @@ wined3d.dll and win32u.dll add real DXGI composition swapchains (ported from
 the giang17/wine fork) so apps that render through them — the Spitfire Audio
 app, and WebView2/Chromium hosts — present into their window instead of
 deadlocking on Wine's hidden-window emulation.
-WineASIO (an ASIO driver over JACK/PipeWire) ships in the same tarball and is
-registered in the prefix by setup; in Cubase pick it under Studio > Studio Setup >
-Audio System > ASIO Driver, and set the buffer size in its Control Panel.
+WineASIO (an ASIO driver over JACK/PipeWire) ships in the same tarball but is off
+until you ask for it: the switch under Health → Audio, or `vstenv wineasio enable`, registers it in the prefix,
+`vstenv wineasio disable` takes it out again, `vstenv wineasio` shows the state.
+ASIO-only programs do not need it to make sound: Cubase installs "Steinberg
+built-in ASIO Driver", which plays through Wine's normal audio. WineASIO is for
+lower latency and more channels. Once on, every ASIO program in the prefix lists
+it; in Cubase pick it under Studio > Studio Setup > Audio System > ASIO Driver.
+Its settings (channel counts, whether the program may change the buffer size
+and which size to offer, connecting to the sound card) are in a small window:
+the Control Panel button beside the driver in the program opens it, and so
+does `vstenv wineasio settings`; `vstenv wineasio set <name> <value>` changes
+one from a terminal and `vstenv wineasio` lists them. Unless you let the
+program change it, the buffer size is the one PipeWire or JACK runs at. Where PipeWire is the sound server
+but the system's `libjack.so.0` is still JACK's own (Debian, Ubuntu, Mint), vstenv
+starts Wine with PipeWire's JACK library first, so `pw-jack` is not needed; the
+package `pipewire-jack` has to be installed.
 
 
 ## Why it is not on Flathub

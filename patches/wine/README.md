@@ -285,6 +285,40 @@ unaware one (it opens "Your DAW plugin interface is not High-DPI aware" in a for
 that is still hidden, and waits for OK). The variable is set for that plugin's
 host only (`plugin-host-env`). Rebuilds the 64-bit `user32` only.
 
+## user32-foreign-children-dce-<version>.patch
+
+SINE Player (JUCE 8 with a bundled WebView2) shows its Store and My Licenses
+pages in a browser window: `Chrome_WidgetWin_0` (SINE's process) >
+`Chrome_WidgetWin_1` (the browser process) > "Intermediate D3D Window" (the
+browser's GPU process). Going back to Library hides the first two, and the page
+stayed painted over the Library until SINE was restarted (issue #37).
+
+The GPU process presents through a cached window DC (`client_surface_present()`
+in win32u, `DCX_CACHE | DCX_USESTYLE`). A cached DC keeps its visible region
+until `invalidate_dce()` marks it, and that runs only in the process that showed,
+hid or resized a window ("cross-process invalidation is not supported yet" in
+win32u/dce.c). The hide happened in two other processes, so the GPU process kept
+its old region and painted the last page into the host's window. No browser flag
+changes this (software rendering, no partial swap, no DirectComposition were all
+tried).
+
+The patch gives `ShowWindow` and `SetWindowPos` real bodies in `user32` (they
+were forwards to win32u). When a call changes a window's visibility or size, the
+descendants that other processes own get
+`SetWindowPos(SWP_FRAMECHANGED | SWP_ASYNCWINDOWPOS | no move/size/z-order)`,
+which runs in the owner's thread and invalidates its DCEs. For a visibility
+change it then waits for those threads (a `WM_NULL` with a 100 ms timeout, queued
+behind the request) and invalidates the area, so whatever the other process drew
+in between is painted over. A window without descendants in another process
+costs one child enumeration and nothing else.
+
+Verified on SINE Player 1.4.3 (Library back after My Licenses and after Store,
+the page shown again on the next visit) and, for regressions, on Minimal Hub
+(Tauri + WebView2) and Softube Central (Electron). The real fix belongs in
+win32u's unix side (invalidate across processes); drop this when Wine has it.
+Rebuilds the 64-bit `user32` only: `EndDeferWindowPos`, `SetParent` and
+`ShowWindowAsync` still go straight to win32u.
+
 ## d2d1-primitive-blend-copy-<version>.patch
 
 `SetPrimitiveBlend(D2D1_PRIMITIVE_BLEND_COPY)` was stored and then ignored: every
@@ -493,6 +527,7 @@ the icon mask renders the same 88 transparent / 81 painted pixels). Named `zz` s
 `d2d1-primitive-blend-copy` (same file). Not fixed here: the slow context menu
 (about 55 ms per item, spent creating a Direct2D device and WIC render target
 per icon).
+
 ## d2d1-zz-shader-cache-<version>.patch
 
 Cubase 14 opens a context menu with ~20 icons in ~1 s because every 13x13 icon
@@ -601,6 +636,60 @@ configure no longer passes `--without-freetype --without-fontconfig`: without
 them the rebuilt `win32u.so` has no font support (it came out 2.3 MB against the
 stock 2.9 MB). The script checks for both
 SONAME defines. Tested in Cubase 14 under Xwayland on KDE Plasma.
+
+This switches on more than the menu hunk: every `dlls/win32u` unix-side change
+in `dcomp-swapchain-present` was dormant until now (cursoricon, font.c, dce.c
+with its cross-process `has_foreign_ancestor()` handling, window.c, OpenGL,
+input, sysparams, the SC_MAXIMIZE geometry), about 1,100 lines, and they now
+run in every program. Checked on Cinnamon (X11) with the rebuilt library
+against the stock one: notepad draws pixel-identical (fonts), menus, minimize
+and restore, a file drop; SINE Player's tabs and Store page, Minimal Hub and
+Softube Central; and in REAPER the editors of Squash, SINE Player, Serum 2 and
+Kontakt 8 at unchanged CPU (121, 60, 17 and 16 percent of a core). If something
+in window, cursor or font behaviour changes after this release, restoring
+`win32u.so.orig` is the first thing to try.
+
+## win32u-post-move-no-erase-<version>.patch
+
+`dcomp-swapchain-present` invalidates a whole window, with an erase, after
+every move or resize (`set_window_pos()` in `dlls/win32u/window.c`). That code
+is in the unix half of win32u, so it did nothing until `win32u.so` was shipped
+(v0.1.162, above). Once live, the erase painted the class background over
+windows that do not draw again when asked: Minimal Hub's WebView2 browser
+window renders through OpenGL into its window surface and presents only when
+the page changes, so shrinking the window left it black until the next resize.
+
+The patch drops `RDW_ERASE` and keeps the invalidation. Tested with Minimal Hub
+in a copy of the prefix (shrink, capture after 10 s): black 6 of 6 with the
+shipped `win32u.so`, drawn 3 of 3 with the stock one, drawn 4 of 4 with the
+patch; Softube Central unchanged. Not tested: SynthEdit, which the invalidation
+was written for in the fork it came from.
+
+## dwrite-text-source-single-chunk-<version>.patch
+
+SINE Player 1.4.5 crashed at start with a page fault at `dwrite+0x2b0f7`
+(issue #37): a read at address 0 in `fallback_font_get_supported_length()`,
+reached from `IDWriteFontFallback::MapCharacters`.
+
+Wine's reader (`text_source_get_u32_char()` in `dlls/dwrite/analyzer.c`) asks
+the app's `IDWriteTextAnalysisSource` for more text whenever one UTF-16 unit is
+left in the chunk it has, in case that unit is half of a surrogate pair. So for
+the last character of any text of two or more units it calls
+`GetTextAtPosition()` with a position other than 0, and then reads the answer
+without checking it. JUCE's source has its text at position 0 only and answers
+anything else with no text ("We don't expect this to be hit" in
+`juce_DirectWriteTypeface_windows.cpp`), so the read was of a null pointer.
+Whether an app hits it depends on the text it shows: a single character is
+fine, two are not.
+
+The patch asks for more only when the last unit of the chunk is a high
+surrogate and the range goes on, and ends the text when the source has none.
+Tested with a small program that calls `MapCharacters` with a source like
+JUCE's ("A", "AB", a letter with a variation selector, an emoji, "Hello"): the
+shipped DLL crashes on the second case at the address from the report, the
+patched one maps all of them and never asks at a position other than 0. Not
+tested: SINE Player 1.4.5 itself (1.4.3 is installed here).
+
 ## WineASIO (no patch: built from upstream)
 
 The tarball also carries WineASIO 1.3.0 (github.com/wineasio/wineasio), an ASIO
@@ -608,10 +697,35 @@ driver over JACK, for low-latency audio in Cubase and other ASIO hosts. It is
 built from upstream source with the patched tree's own `winegcc`/`winebuild`
 (64-bit only) and installed as `x86_64-unix/wineasio.dll.so` (the only unix name
 Wine 11 loads; the AUR's `wineasio64.dll.so` is ignored) and the PE stub
-`wineasio.dll`. `vstenv/wineasio.py` (setup, `vstenv wine-fixes install`) copies
-the stub into the prefix's system32 as `wineasio64.dll` and runs `regsvr32 /s`
-through the app's Wine runner, which creates `HKLM\Software\ASIO\WineASIO`.
-Wine runs on the host, so it dlopens the host's `libjack.so.0`: PipeWire's
-(`pipewire-jack`) or JACK's own must be installed there. In Cubase: Studio > Studio
-Setup > Audio System > ASIO Driver = WineASIO; the buffer size is set in its
-Control Panel button there.
+`wineasio.dll`. It is opt-in: `vstenv wineasio enable` (`vstenv/wineasio.py`)
+copies the stub into the prefix's system32 as `wineasio64.dll` and runs
+`regsvr32 /s` through the app's Wine runner, which creates
+`HKLM\Software\ASIO\WineASIO`; setup and `vstenv wine-fixes install` only keep
+an existing registration's copy current. Opt-in because every ASIO program in
+the prefix then lists it, and Cubase already has Steinberg's built-in ASIO
+driver over Wine's normal audio (it opened here at 2 in / 2 out, 480 samples,
+48 kHz).
+
+Wine runs on the host, so the driver dlopens the host's `libjack.so.0`. On
+Debian, Ubuntu and Mint that is JACK2's library even with PipeWire as the sound
+server (PipeWire's sits in `/usr/lib/x86_64-linux-gnu/pipewire-0.3/jack`, which
+only `pw-jack` adds), and WineASIO's `init` fails with "Unable to open a JACK
+client". While the driver is registered, `Prefix.wine_env` puts PipeWire's JACK
+directory first on Wine's `LD_LIBRARY_PATH` when PipeWire's socket exists and
+no `jackd` runs. Measured with a small ASIO client on Linux Mint (PipeWire
+1.0.5): system libjack, init fails; PipeWire's, 16 in / 16 out, 1024 samples,
+48 kHz. In Cubase: Studio > Studio Setup > Audio System > ASIO Driver =
+WineASIO.
+
+The driver's Control Panel button runs a host program named `wineasio-settings`
+(`execvp`, so from PATH). Upstream's is a PyQt tool under the GPL that edits
+`~/.wine` unless `WINEPREFIX` says otherwise and calls whatever `regedit` is on
+PATH; it is not shipped. Instead `vstenv wineasio enable` writes a two-line
+launcher of that name into `~/.local/share/vstenv/wineasio-bin`, which is put
+first on Wine's PATH while the driver is registered, and it opens vstenv's own
+settings window (`vstenv/wineasio_gui.py`, also `vstenv wineasio settings`) for
+this prefix. The window and `vstenv wineasio set` write the six REG_DWORD values
+the driver reads from `HKCU\Software\Wine\WineASIO` when a program opens it.
+Checked with the ASIO client: after `inputs 4`, `fixed-buffer 0`, `buffer 256`
+the driver reports 4 inputs and a 16 to 8192 range with 256 preferred, and
+`ControlPanel()` runs the launcher.

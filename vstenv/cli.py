@@ -83,6 +83,36 @@ def cmd_ntsync(a):
     s = ntsync.status(); ok, why = ntsync.summary(s); print(why)
     if ntsync.can_enable(s): print(f"Turn it on: {APP_NAME} ntsync enable (asks for your password once)")
 
+def cmd_wineasio(a):
+    """WineASIO: an ASIO driver over JACK/PipeWire, off until asked for."""
+    from . import wineasio, winefixes
+    p = _prefix()
+    if a.action == "status":
+        have = winefixes.has(p.build, wineasio.DLL) and winefixes.has(p.build, "x86_64-unix/wineasio.dll.so")
+        on = wineasio.registered(p) if p.exists else False
+        print("WineASIO: " + ("on (ASIO programs list it as WineASIO)" if on else "off" if have else "not in this Wine build (vstenv wine-fixes install)"))
+        d, _ = wineasio.pipewire_jack_dir()
+        print("JACK library: " + (f"PipeWire's ({d})" if d else "the system's libjack.so.0 (a JACK server must be running, or install pipewire-jack)"))
+        if p.exists:
+            vals = wineasio.settings(p)
+            for name, (_, default, _, _, what) in wineasio.SETTINGS.items():
+                print(f"  {name:<17} {vals[name]:<5} {what}" + ("" if vals[name] == default else f" (default {default})"))
+            print(f"Change one: {APP_NAME} wineasio set <name> <value>   or the window: {APP_NAME} wineasio settings")
+        if have and not on: print(f"Turn it on: {APP_NAME} wineasio enable")
+        return
+    if a.action == "set":
+        if not a.name or a.value is None: sys.exit(f"usage: {APP_NAME} wineasio set <{'|'.join(wineasio.SETTINGS)}> <value>")
+        try: v = wineasio.set_setting(p, a.name, a.value)
+        except (ValueError, RuntimeError) as e: sys.exit(str(e))
+        print(f"{a.name} = {v} (used the next time a program opens the driver)"); return
+    if a.action == "settings":
+        from . import wineasio_gui
+        sys.exit(wineasio_gui.run(p))
+    r = ConsoleReporter()
+    if a.action == "enable": wineasio.register(p, r)
+    else: wineasio.unregister(p, r)
+    _fail_if(r)
+
 def cmd_wedge(a):
     """The DirectComposition wedge: every dcomp GUI hangs until Wine restarts."""
     from . import wedge
@@ -269,7 +299,12 @@ def cmd_recipe(a):
 
 def cmd_run(a):
     p = _prefix(); r = ConsoleReporter()
+    from . import debugrun
+    if a.debug and a.debug not in debugrun.TOPIC_NAMES and a.name is None: a.name, a.debug = a.debug, "crash"   # run --debug NAME
+    if a.name is None: sys.exit(f"usage: {APP_NAME} run <name> [--debug[={'|'.join(debugrun.TOPIC_NAMES)}]]")
+    if a.debug and a.debug not in debugrun.TOPIC_NAMES: sys.exit(f"--debug takes one of: {', '.join(debugrun.TOPIC_NAMES)}")
     prog = programs.find(p, a.name)
+    if a.debug: return _run_debug(p, prog, a.debug, r)
     try: proc = programs.run(p, prog, r)
     except RuntimeError as e: sys.exit(str(e))
     if a.wait:
@@ -285,6 +320,18 @@ def cmd_run(a):
         _join_window_watch(proc)
         programs.watch_plugins(p, proc, lambda: setup.after_change(p, r))
         setup.after_change(p, r)
+
+def _run_debug(p, prog, topic, r):
+    from . import debugrun
+    print(f"Running {prog.name} with {topic} logging. Reproduce the problem, then close it (or let it crash); Ctrl+C stops logging.\n"
+          f"If it hangs, run in another terminal: {APP_NAME} hang-dump")
+    try: d = debugrun.run(p, prog, topic, r)
+    except RuntimeError as e: sys.exit(str(e))
+    print(f"\nDebug logs: {d}\nNow run: {APP_NAME} report  (it includes these logs, with serials, licence tokens and your home path removed)")
+
+def cmd_hang_dump(a):
+    from . import debugrun
+    print(f"wrote {debugrun.hang_dump(_prefix())}\nNow run: {APP_NAME} report")
 
 def _join_window_watch(proc, seconds=40.0):
     """Wait for the window watcher programs.run attached (it fixes a window the WM
@@ -384,7 +431,7 @@ def cmd_wine_fixes(a):
     if a.action == "remove":
         winefixes.remove(b, r); wineasio.unregister(wine.Prefix(paths.PREFIX, b), r)
     elif wineasio.DLL in winefixes.install(b, r, force=a.force):
-        wineasio.register(wine.Prefix(paths.PREFIX, b), r)   # new files: register them (not under `remove`)
+        wineasio.refresh(wine.Prefix(paths.PREFIX, b), r)    # new files: an existing registration gets them
     _fail_if(r)
 
 def cmd_dxvk(a):
@@ -421,7 +468,8 @@ def cmd_report(a):
     b = wine.installed_build(); p = wine.Prefix(paths.PREFIX, b) if b else None
     if a.summary_only: print(report.summary(p)); return
     dest = report.write_bundle(Path(a.output) if a.output else None, p)
-    print(f"wrote {dest}\nIt contains a summary and this app's logs, with serials, licence tokens and your home directory removed.")
+    print(f"wrote {dest}\nIt contains a summary, this app's logs and the last debug run's logs, with serials, licence tokens and your home directory removed;"
+          " and Cubase's newest crash dump, if there is one, as it is.")
 
 def cmd_rescue(a):
     p = _prefix(); r = ConsoleReporter(); res = []
@@ -472,7 +520,10 @@ def main(argv=None):
     s.add_argument("name", help="program name, or part of it")
     s.add_argument("state", nargs="?", choices=["on", "off"], help="omit to show the current setting")
     s.set_defaults(f=cmd_unmanaged)
-    s = sp.add_parser("run", help="start an installed program (name or part of it)"); s.add_argument("name"); s.add_argument("--wait", action="store_true"); s.set_defaults(f=cmd_run)
+    s = sp.add_parser("run", help="start an installed program (name or part of it)"); s.add_argument("name", nargs="?"); s.add_argument("--wait", action="store_true")
+    s.add_argument("--debug", nargs="?", const="crash", metavar="TOPIC",
+                   help="run it once with debug logging (crash, graphics, windows, dragdrop or all; default crash) into a directory `report` includes; waits for it to exit"); s.set_defaults(f=cmd_run)
+    sp.add_parser("hang-dump", help="while a program hangs: write every thread's backtrace into the newest debug log directory").set_defaults(f=cmd_hang_dump)
     s = sp.add_parser("uninstall", help="uninstall a program (its own uninstaller) or a vendor product without one (an NI application or library)"); s.add_argument("name"); s.add_argument("--no-sync", action="store_true"); s.set_defaults(f=cmd_uninstall)
     s = sp.add_parser("remove-environment", help="delete the prefix and everything setup made (bridged plugins, menu and file manager entries, URL handlers), so the next start sets up fresh")
     s.add_argument("--downloads", action="store_true", help="also delete the cached downloads (~/.cache/vstenv)"); s.add_argument("--yes", action="store_true", help="do not ask"); s.set_defaults(f=cmd_remove_environment)
@@ -487,6 +538,10 @@ def main(argv=None):
     s.set_defaults(f=cmd_webview2)
     s = sp.add_parser("wine-fixes", help="patched Wine DLLs this app ships (DirectComposition for Steinberg): install | status | remove")
     s.add_argument("action", nargs="?", default="install", choices=["install", "status", "remove"]); s.add_argument("--force", action="store_true"); s.set_defaults(f=cmd_wine_fixes)
+    s = sp.add_parser("wineasio", help="an ASIO driver over JACK/PipeWire for ASIO-only programs that need low latency (Cubase): status | enable | disable | set <name> <value> | settings (a window)")
+    s.add_argument("action", nargs="?", default="status", choices=["status", "enable", "disable", "set", "settings"])
+    s.add_argument("name", nargs="?", help="for set: inputs, outputs, buffer, fixed-buffer, connect-hardware, autostart-jack"); s.add_argument("value", nargs="?")
+    s.set_defaults(f=cmd_wineasio)
     s = sp.add_parser("dxvk", help="Direct3D on Vulkan for plugin GUIs that Wine draws wrong")
     s.add_argument("action", nargs="?", default="install", choices=["install", "remove", "status"]); s.add_argument("--force", action="store_true"); s.set_defaults(f=cmd_dxvk)
     sp.add_parser("prefixes", help="which vstenv prefixes exist, who owns a vendor daemon, what yabridge points at").set_defaults(f=cmd_prefixes)
