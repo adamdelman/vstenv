@@ -53,7 +53,13 @@ FIXES = {"dcomp.dll": "DirectComposition (Steinberg's VSTGUI: HALion Sonic 7, Cu
          "x86_64-unix/wineasio.dll.so": "WineASIO's unix half, under the name Wine loads it by",
          "nirescan.exe": "NI controllers plugged in after Wine started are seen (Komplete Kontrol keyboards, Maschine; from ni-wine)",
          "x86_64-unix/winex11.so": "a cursor set from another process shows as an arrow, not nothing (WebView2 windows: Minimal Hub); a dropped file's dialog takes clicks, one taskbar click restores a minimized window, and closing a window ends its open menu first (Cubase 14)",
-         "x86_64-unix/win32u.so": "menu icons keep their alpha (32-bit menu bitmaps are alpha-blended); built with FreeType and fontconfig"}
+         "x86_64-unix/win32u.so": "menu icons keep their alpha (32-bit menu bitmaps are alpha-blended); built with FreeType and fontconfig",
+         "windows.globalization.dll": "the Windows.Globalization.Calendar class (Cubase 14-16's head-tracking module died at start without it)",
+         "windows.perception.stub.dll": "SpatialLocator.GetDefault says \"no headset\" (Cubase 14-16's head-tracking module died at start)"}
+# WinRT classes the patched DLLs add. A prefix only finds a class through its
+# registry entry, which Wine writes at a prefix update, not when a DLL is copied.
+WINRT_CLASSES = {"windows.globalization.dll": "Windows.Globalization.Calendar",
+                 "windows.perception.stub.dll": "Windows.Perception.Spatial.SpatialLocator"}
 
 def dest(build: wine.WineBuild, name: str) -> Path:
     """Where a packaged file goes in the Wine build: a bare name is a 64-bit PE
@@ -173,3 +179,14 @@ def remove(build: wine.WineBuild, reporter=None) -> list[str]:
     (build.root / MARKER_NAME).unlink(missing_ok=True)
     r.ok(", ".join(back) if back else "nothing to restore")
     return back
+
+def register_classes(p: wine.Prefix, reporter=None) -> bool:
+    """Run a prefix update when a patched DLL's WinRT class is not registered yet
+    (RoGetActivationFactory fails with "class not registered" until then). Returns True if it ran."""
+    r = null_reporter(reporter); r.step("WinRT classes of the patched DLLs")
+    missing = [c for dll, c in WINRT_CLASSES.items() if has(p.build, dll)
+               and not p.reg_query(rf"HKLM\Software\Microsoft\WindowsRuntime\ActivatableClassId\{c}")]
+    if not missing: r.skip(); return False
+    (p.path / ".update-timestamp").unlink(missing_ok=True)
+    p.run(["wineboot", "-u"], timeout=900)
+    r.ok("registered " + ", ".join(missing)); return True

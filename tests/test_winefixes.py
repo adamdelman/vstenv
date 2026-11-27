@@ -39,6 +39,19 @@ class WineFixesTest(unittest.TestCase):
             dll.write_bytes(b"stock dcomp")                      # a re-extracted Wine put the stock file back
             self.assertFalse(winefixes.has(b, "dcomp.dll"), "the marker alone does not count")
             self.assertEqual(sorted(winefixes.remove(b)), sorted(winefixes.FIXES)); self.assertFalse((b.root / winefixes.MARKER_NAME).exists())
+    def test_register_classes_runs_a_prefix_update_only_while_a_class_is_missing(self):
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d); b = _fake_build(tmp); tgz = _tarball(tmp)
+            with mock.patch.dict("os.environ", {"VSTENV_WINE_FIXES": str(tgz)}): winefixes.install(b)
+            p = wine.Prefix(tmp / "prefix", b); p.path.mkdir(); (p.path / ".update-timestamp").write_text("1")
+            reg = {}
+            with mock.patch.object(p, "reg_query", side_effect=lambda k: reg.get(k.rsplit("\\", 1)[-1], {})), \
+                 mock.patch.object(p, "run") as run:
+                self.assertTrue(winefixes.register_classes(p))
+                run.assert_called_once(); self.assertEqual(run.call_args[0][0], ["wineboot", "-u"])
+                self.assertFalse((p.path / ".update-timestamp").exists())
+                reg.update({c: {"DllPath": "x"} for c in winefixes.WINRT_CLASSES.values()}); run.reset_mock()
+                self.assertFalse(winefixes.register_classes(p)); run.assert_not_called()
     def test_missing_keys_are_reported_and_a_short_tarball_installs_what_it_has(self):
         with tempfile.TemporaryDirectory() as d:
             tmp = Path(d); b = _fake_build(tmp); tgz = _tarball(tmp)

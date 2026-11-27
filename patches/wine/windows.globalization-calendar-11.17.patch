@@ -1,0 +1,972 @@
+--- a/dlls/windows.globalization/Makefile.in
++++ b/dlls/windows.globalization/Makefile.in
+@@ -2,6 +2,7 @@
+ IMPORTS = combase uuid
+ 
+ SOURCES = \
++	calendar.c \
+ 	classes.idl \
+ 	geographic_region.c \
+ 	main.c
+--- /dev/null
++++ b/dlls/windows.globalization/calendar.c
+@@ -0,0 +1,925 @@
++/*
++ * Copyright 2026 vstenv contributors
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with this library; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
++ */
++
++#include "private.h"
++
++WINE_DEFAULT_DEBUG_CHANNEL(locale);
++
++/* A Calendar holds one point in time; DateTime.UniversalTime and FILETIME share
++ * their epoch and unit (100 ns since 1601 UTC). The field and string accessors
++ * are not implemented yet. */
++struct calendar
++{
++    ICalendar ICalendar_iface;
++    LONG ref;
++    DateTime time;
++};
++
++static inline struct calendar *impl_from_ICalendar( ICalendar *iface )
++{
++    return CONTAINING_RECORD( iface, struct calendar, ICalendar_iface );
++}
++
++static HRESULT create_calendar( DateTime time, ICalendar **out );
++
++static HRESULT WINAPI calendar_QueryInterface( ICalendar *iface, REFIID iid, void **out )
++{
++    struct calendar *impl = impl_from_ICalendar( iface );
++
++    TRACE( "iface %p, iid %s, out %p.\n", iface, debugstr_guid( iid ), out );
++
++    if (IsEqualGUID( iid, &IID_IUnknown ) ||
++        IsEqualGUID( iid, &IID_IInspectable ) ||
++        IsEqualGUID( iid, &IID_IAgileObject ) ||
++        IsEqualGUID( iid, &IID_ICalendar ))
++    {
++        IInspectable_AddRef( (*out = &impl->ICalendar_iface) );
++        return S_OK;
++    }
++
++    FIXME( "%s not implemented, returning E_NOINTERFACE.\n", debugstr_guid( iid ) );
++    *out = NULL;
++    return E_NOINTERFACE;
++}
++
++static ULONG WINAPI calendar_AddRef( ICalendar *iface )
++{
++    struct calendar *impl = impl_from_ICalendar( iface );
++    ULONG ref = InterlockedIncrement( &impl->ref );
++    TRACE( "iface %p, ref %lu.\n", iface, ref );
++    return ref;
++}
++
++static ULONG WINAPI calendar_Release( ICalendar *iface )
++{
++    struct calendar *impl = impl_from_ICalendar( iface );
++    ULONG ref = InterlockedDecrement( &impl->ref );
++    TRACE( "iface %p, ref %lu.\n", iface, ref );
++    if (!ref) free( impl );
++    return ref;
++}
++
++static HRESULT WINAPI calendar_GetIids( ICalendar *iface, ULONG *iid_count, IID **iids )
++{
++    FIXME( "iface %p, iid_count %p, iids %p stub!\n", iface, iid_count, iids );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_GetRuntimeClassName( ICalendar *iface, HSTRING *class_name )
++{
++    TRACE( "iface %p, class_name %p.\n", iface, class_name );
++    return WindowsCreateString( RuntimeClass_Windows_Globalization_Calendar,
++                                wcslen( RuntimeClass_Windows_Globalization_Calendar ), class_name );
++}
++
++static HRESULT WINAPI calendar_GetTrustLevel( ICalendar *iface, TrustLevel *trust_level )
++{
++    FIXME( "iface %p, trust_level %p stub!\n", iface, trust_level );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_Clone( ICalendar *iface, ICalendar **value )
++{
++    struct calendar *impl = impl_from_ICalendar( iface );
++    TRACE( "iface %p, value %p.\n", iface, value );
++    return create_calendar( impl->time, value );
++}
++
++static HRESULT WINAPI calendar_GetDateTime( ICalendar *iface, DateTime *result )
++{
++    struct calendar *impl = impl_from_ICalendar( iface );
++    TRACE( "iface %p, result %p.\n", iface, result );
++    *result = impl->time;
++    return S_OK;
++}
++
++static HRESULT WINAPI calendar_SetDateTime( ICalendar *iface, DateTime value )
++{
++    struct calendar *impl = impl_from_ICalendar( iface );
++    TRACE( "iface %p, value %I64d.\n", iface, value.UniversalTime );
++    impl->time = value;
++    return S_OK;
++}
++
++static HRESULT WINAPI calendar_SetToNow( ICalendar *iface )
++{
++    struct calendar *impl = impl_from_ICalendar( iface );
++    FILETIME now;
++
++    TRACE( "iface %p.\n", iface );
++
++    GetSystemTimePreciseAsFileTime( &now );
++    impl->time.UniversalTime = ((INT64)now.dwHighDateTime << 32) | now.dwLowDateTime;
++    return S_OK;
++}
++
++static HRESULT WINAPI calendar_CompareDateTime( ICalendar *iface, DateTime other, INT32 *result )
++{
++    struct calendar *impl = impl_from_ICalendar( iface );
++    TRACE( "iface %p, other %I64d, result %p.\n", iface, other.UniversalTime, result );
++    *result = impl->time.UniversalTime < other.UniversalTime ? -1 : impl->time.UniversalTime > other.UniversalTime;
++    return S_OK;
++}
++
++static HRESULT WINAPI calendar_Compare( ICalendar *iface, ICalendar *other, INT32 *result )
++{
++    DateTime time;
++    HRESULT hr;
++
++    TRACE( "iface %p, other %p, result %p.\n", iface, other, result );
++
++    if (!other) return E_POINTER;
++    if (FAILED(hr = ICalendar_GetDateTime( other, &time ))) return hr;
++    return ICalendar_CompareDateTime( iface, time, result );
++}
++
++static HRESULT WINAPI calendar_CopyTo( ICalendar *iface, ICalendar *other )
++{
++    struct calendar *impl = impl_from_ICalendar( iface );
++    TRACE( "iface %p, other %p.\n", iface, other );
++    if (!other) return E_POINTER;
++    return ICalendar_SetDateTime( other, impl->time );
++}
++
++static HRESULT WINAPI calendar_SetToMin( ICalendar *iface )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_SetToMax( ICalendar *iface )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_get_Languages( ICalendar *iface, __FIVectorView_1_HSTRING **value )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_get_NumeralSystem( ICalendar *iface, HSTRING *value )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_put_NumeralSystem( ICalendar *iface, HSTRING value )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_GetCalendarSystem( ICalendar *iface, HSTRING *value )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_ChangeCalendarSystem( ICalendar *iface, HSTRING value )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_GetClock( ICalendar *iface, HSTRING *value )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_ChangeClock( ICalendar *iface, HSTRING value )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_get_FirstEra( ICalendar *iface, INT32 *value )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_get_LastEra( ICalendar *iface, INT32 *value )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_get_NumberOfEras( ICalendar *iface, INT32 *value )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_get_Era( ICalendar *iface, INT32 *value )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_put_Era( ICalendar *iface, INT32 value )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_AddEras( ICalendar *iface, INT32 eras )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_EraAsFullString( ICalendar *iface, HSTRING *result )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_EraAsString( ICalendar *iface, INT32 ideal_length, HSTRING *result )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_get_FirstYearInThisEra( ICalendar *iface, INT32 *value )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_get_LastYearInThisEra( ICalendar *iface, INT32 *value )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_get_NumberOfYearsInThisEra( ICalendar *iface, INT32 *value )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_get_Year( ICalendar *iface, INT32 *value )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_put_Year( ICalendar *iface, INT32 value )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_AddYears( ICalendar *iface, INT32 years )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_YearAsString( ICalendar *iface, HSTRING *result )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_YearAsTruncatedString( ICalendar *iface, INT32 remaining_digits, HSTRING *result )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_YearAsPaddedString( ICalendar *iface, INT32 min_digits, HSTRING *result )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_get_FirstMonthInThisYear( ICalendar *iface, INT32 *value )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_get_LastMonthInThisYear( ICalendar *iface, INT32 *value )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_get_NumberOfMonthsInThisYear( ICalendar *iface, INT32 *value )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_get_Month( ICalendar *iface, INT32 *value )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_put_Month( ICalendar *iface, INT32 value )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_AddMonths( ICalendar *iface, INT32 months )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_MonthAsFullString( ICalendar *iface, HSTRING *result )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_MonthAsString( ICalendar *iface, INT32 ideal_length, HSTRING *result )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_MonthAsFullSoloString( ICalendar *iface, HSTRING *result )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_MonthAsSoloString( ICalendar *iface, INT32 ideal_length, HSTRING *result )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_MonthAsNumericString( ICalendar *iface, HSTRING *result )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_MonthAsPaddedNumericString( ICalendar *iface, INT32 min_digits, HSTRING *result )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_AddWeeks( ICalendar *iface, INT32 weeks )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_get_FirstDayInThisMonth( ICalendar *iface, INT32 *value )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_get_LastDayInThisMonth( ICalendar *iface, INT32 *value )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_get_NumberOfDaysInThisMonth( ICalendar *iface, INT32 *value )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_get_Day( ICalendar *iface, INT32 *value )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_put_Day( ICalendar *iface, INT32 value )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_AddDays( ICalendar *iface, INT32 days )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_DayAsString( ICalendar *iface, HSTRING *result )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_DayAsPaddedString( ICalendar *iface, INT32 min_digits, HSTRING *result )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_get_DayOfWeek( ICalendar *iface, __x_ABI_CWindows_CGlobalization_CDayOfWeek *value )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_DayOfWeekAsFullString( ICalendar *iface, HSTRING *result )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_DayOfWeekAsString( ICalendar *iface, INT32 ideal_length, HSTRING *result )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_DayOfWeekAsFullSoloString( ICalendar *iface, HSTRING *result )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_DayOfWeekAsSoloString( ICalendar *iface, INT32 ideal_length, HSTRING *result )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_get_FirstPeriodInThisDay( ICalendar *iface, INT32 *value )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_get_LastPeriodInThisDay( ICalendar *iface, INT32 *value )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_get_NumberOfPeriodsInThisDay( ICalendar *iface, INT32 *value )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_get_Period( ICalendar *iface, INT32 *value )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_put_Period( ICalendar *iface, INT32 value )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_AddPeriods( ICalendar *iface, INT32 periods )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_PeriodAsFullString( ICalendar *iface, HSTRING *result )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_PeriodAsString( ICalendar *iface, INT32 ideal_length, HSTRING *result )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_get_FirstHourInThisPeriod( ICalendar *iface, INT32 *value )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_get_LastHourInThisPeriod( ICalendar *iface, INT32 *value )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_get_NumberOfHoursInThisPeriod( ICalendar *iface, INT32 *value )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_get_Hour( ICalendar *iface, INT32 *value )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_put_Hour( ICalendar *iface, INT32 value )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_AddHours( ICalendar *iface, INT32 hours )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_HourAsString( ICalendar *iface, HSTRING *result )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_HourAsPaddedString( ICalendar *iface, INT32 min_digits, HSTRING *result )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_get_Minute( ICalendar *iface, INT32 *value )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_put_Minute( ICalendar *iface, INT32 value )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_AddMinutes( ICalendar *iface, INT32 minutes )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_MinuteAsString( ICalendar *iface, HSTRING *result )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_MinuteAsPaddedString( ICalendar *iface, INT32 min_digits, HSTRING *result )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_get_Second( ICalendar *iface, INT32 *value )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_put_Second( ICalendar *iface, INT32 value )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_AddSeconds( ICalendar *iface, INT32 seconds )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_SecondAsString( ICalendar *iface, HSTRING *result )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_SecondAsPaddedString( ICalendar *iface, INT32 min_digits, HSTRING *result )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_get_Nanosecond( ICalendar *iface, INT32 *value )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_put_Nanosecond( ICalendar *iface, INT32 value )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_AddNanoseconds( ICalendar *iface, INT32 nanoseconds )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_NanosecondAsString( ICalendar *iface, HSTRING *result )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_NanosecondAsPaddedString( ICalendar *iface, INT32 min_digits, HSTRING *result )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_get_FirstMinuteInThisHour( ICalendar *iface, INT32 *value )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_get_LastMinuteInThisHour( ICalendar *iface, INT32 *value )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_get_NumberOfMinutesInThisHour( ICalendar *iface, INT32 *value )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_get_FirstSecondInThisMinute( ICalendar *iface, INT32 *value )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_get_LastSecondInThisMinute( ICalendar *iface, INT32 *value )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_get_NumberOfSecondsInThisMinute( ICalendar *iface, INT32 *value )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_get_ResolvedLanguage( ICalendar *iface, HSTRING *value )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI calendar_get_IsDaylightSavingTime( ICalendar *iface, boolean *value )
++{
++    FIXME( "iface %p stub!\n", iface );
++    return E_NOTIMPL;
++}
++
++static const struct ICalendarVtbl calendar_vtbl =
++{
++    calendar_QueryInterface,
++    calendar_AddRef,
++    calendar_Release,
++    /* IInspectable methods */
++    calendar_GetIids,
++    calendar_GetRuntimeClassName,
++    calendar_GetTrustLevel,
++    /* ICalendar methods */
++    calendar_Clone,
++    calendar_SetToMin,
++    calendar_SetToMax,
++    calendar_get_Languages,
++    calendar_get_NumeralSystem,
++    calendar_put_NumeralSystem,
++    calendar_GetCalendarSystem,
++    calendar_ChangeCalendarSystem,
++    calendar_GetClock,
++    calendar_ChangeClock,
++    calendar_GetDateTime,
++    calendar_SetDateTime,
++    calendar_SetToNow,
++    calendar_get_FirstEra,
++    calendar_get_LastEra,
++    calendar_get_NumberOfEras,
++    calendar_get_Era,
++    calendar_put_Era,
++    calendar_AddEras,
++    calendar_EraAsFullString,
++    calendar_EraAsString,
++    calendar_get_FirstYearInThisEra,
++    calendar_get_LastYearInThisEra,
++    calendar_get_NumberOfYearsInThisEra,
++    calendar_get_Year,
++    calendar_put_Year,
++    calendar_AddYears,
++    calendar_YearAsString,
++    calendar_YearAsTruncatedString,
++    calendar_YearAsPaddedString,
++    calendar_get_FirstMonthInThisYear,
++    calendar_get_LastMonthInThisYear,
++    calendar_get_NumberOfMonthsInThisYear,
++    calendar_get_Month,
++    calendar_put_Month,
++    calendar_AddMonths,
++    calendar_MonthAsFullString,
++    calendar_MonthAsString,
++    calendar_MonthAsFullSoloString,
++    calendar_MonthAsSoloString,
++    calendar_MonthAsNumericString,
++    calendar_MonthAsPaddedNumericString,
++    calendar_AddWeeks,
++    calendar_get_FirstDayInThisMonth,
++    calendar_get_LastDayInThisMonth,
++    calendar_get_NumberOfDaysInThisMonth,
++    calendar_get_Day,
++    calendar_put_Day,
++    calendar_AddDays,
++    calendar_DayAsString,
++    calendar_DayAsPaddedString,
++    calendar_get_DayOfWeek,
++    calendar_DayOfWeekAsFullString,
++    calendar_DayOfWeekAsString,
++    calendar_DayOfWeekAsFullSoloString,
++    calendar_DayOfWeekAsSoloString,
++    calendar_get_FirstPeriodInThisDay,
++    calendar_get_LastPeriodInThisDay,
++    calendar_get_NumberOfPeriodsInThisDay,
++    calendar_get_Period,
++    calendar_put_Period,
++    calendar_AddPeriods,
++    calendar_PeriodAsFullString,
++    calendar_PeriodAsString,
++    calendar_get_FirstHourInThisPeriod,
++    calendar_get_LastHourInThisPeriod,
++    calendar_get_NumberOfHoursInThisPeriod,
++    calendar_get_Hour,
++    calendar_put_Hour,
++    calendar_AddHours,
++    calendar_HourAsString,
++    calendar_HourAsPaddedString,
++    calendar_get_Minute,
++    calendar_put_Minute,
++    calendar_AddMinutes,
++    calendar_MinuteAsString,
++    calendar_MinuteAsPaddedString,
++    calendar_get_Second,
++    calendar_put_Second,
++    calendar_AddSeconds,
++    calendar_SecondAsString,
++    calendar_SecondAsPaddedString,
++    calendar_get_Nanosecond,
++    calendar_put_Nanosecond,
++    calendar_AddNanoseconds,
++    calendar_NanosecondAsString,
++    calendar_NanosecondAsPaddedString,
++    calendar_Compare,
++    calendar_CompareDateTime,
++    calendar_CopyTo,
++    calendar_get_FirstMinuteInThisHour,
++    calendar_get_LastMinuteInThisHour,
++    calendar_get_NumberOfMinutesInThisHour,
++    calendar_get_FirstSecondInThisMinute,
++    calendar_get_LastSecondInThisMinute,
++    calendar_get_NumberOfSecondsInThisMinute,
++    calendar_get_ResolvedLanguage,
++    calendar_get_IsDaylightSavingTime,
++};
++
++static HRESULT create_calendar( DateTime time, ICalendar **out )
++{
++    struct calendar *impl;
++
++    if (!(impl = calloc( 1, sizeof(*impl) ))) return E_OUTOFMEMORY;
++    impl->ICalendar_iface.lpVtbl = &calendar_vtbl;
++    impl->ref = 1;
++    impl->time = time;
++    *out = &impl->ICalendar_iface;
++    return S_OK;
++}
++
++struct calendar_factory
++{
++    IActivationFactory IActivationFactory_iface;
++    LONG ref;
++};
++
++static inline struct calendar_factory *impl_from_IActivationFactory( IActivationFactory *iface )
++{
++    return CONTAINING_RECORD( iface, struct calendar_factory, IActivationFactory_iface );
++}
++
++static HRESULT WINAPI factory_QueryInterface( IActivationFactory *iface, REFIID iid, void **out )
++{
++    struct calendar_factory *impl = impl_from_IActivationFactory( iface );
++
++    TRACE( "iface %p, iid %s, out %p.\n", iface, debugstr_guid( iid ), out );
++
++    if (IsEqualGUID( iid, &IID_IUnknown ) ||
++        IsEqualGUID( iid, &IID_IInspectable ) ||
++        IsEqualGUID( iid, &IID_IAgileObject ) ||
++        IsEqualGUID( iid, &IID_IActivationFactory ))
++    {
++        IActivationFactory_AddRef( (*out = &impl->IActivationFactory_iface) );
++        return S_OK;
++    }
++
++    FIXME( "%s not implemented, returning E_NOINTERFACE.\n", debugstr_guid( iid ) );
++    *out = NULL;
++    return E_NOINTERFACE;
++}
++
++static ULONG WINAPI factory_AddRef( IActivationFactory *iface )
++{
++    struct calendar_factory *impl = impl_from_IActivationFactory( iface );
++    ULONG ref = InterlockedIncrement( &impl->ref );
++    TRACE( "iface %p, ref %lu.\n", iface, ref );
++    return ref;
++}
++
++static ULONG WINAPI factory_Release( IActivationFactory *iface )
++{
++    struct calendar_factory *impl = impl_from_IActivationFactory( iface );
++    ULONG ref = InterlockedDecrement( &impl->ref );
++    TRACE( "iface %p, ref %lu.\n", iface, ref );
++    return ref;
++}
++
++static HRESULT WINAPI factory_GetIids( IActivationFactory *iface, ULONG *iid_count, IID **iids )
++{
++    FIXME( "iface %p, iid_count %p, iids %p stub!\n", iface, iid_count, iids );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI factory_GetRuntimeClassName( IActivationFactory *iface, HSTRING *class_name )
++{
++    FIXME( "iface %p, class_name %p stub!\n", iface, class_name );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI factory_GetTrustLevel( IActivationFactory *iface, TrustLevel *trust_level )
++{
++    FIXME( "iface %p, trust_level %p stub!\n", iface, trust_level );
++    return E_NOTIMPL;
++}
++
++/* The default calendar of the user's languages, set to the current time. */
++static HRESULT WINAPI factory_ActivateInstance( IActivationFactory *iface, IInspectable **out )
++{
++    ICalendar *calendar;
++    HRESULT hr;
++
++    TRACE( "iface %p, out %p.\n", iface, out );
++
++    if (FAILED(hr = create_calendar( (DateTime){0}, &calendar ))) return hr;
++    ICalendar_SetToNow( calendar );
++    *out = (IInspectable *)calendar;
++    return S_OK;
++}
++
++static const struct IActivationFactoryVtbl factory_vtbl =
++{
++    factory_QueryInterface,
++    factory_AddRef,
++    factory_Release,
++    /* IInspectable methods */
++    factory_GetIids,
++    factory_GetRuntimeClassName,
++    factory_GetTrustLevel,
++    /* IActivationFactory methods */
++    factory_ActivateInstance,
++};
++
++static struct calendar_factory calendar_factory =
++{
++    {&factory_vtbl},
++    1,
++};
++
++IActivationFactory *calendar_factory_iface = &calendar_factory.IActivationFactory_iface;
+--- a/dlls/windows.globalization/classes.idl
++++ b/dlls/windows.globalization/classes.idl
+@@ -34,6 +34,7 @@
+     runtimeclass GlobalizationPreferences;
+ }
+ namespace Windows.Globalization {
++    runtimeclass Calendar;
+     runtimeclass Language;
+     runtimeclass GeographicRegion;
+     runtimeclass ApplicationLanguages;
+--- a/dlls/windows.globalization/main.c
++++ b/dlls/windows.globalization/main.c
+@@ -1134,6 +1134,11 @@
+         *factory = geographic_region_factory;
+         IUnknown_AddRef(*factory);
+     }
++    else if (!wcscmp(name, RuntimeClass_Windows_Globalization_Calendar))
++    {
++        *factory = calendar_factory_iface;
++        IUnknown_AddRef(*factory);
++    }
+     else if (!wcscmp(name, RuntimeClass_Windows_Globalization_ApplicationLanguages))
+     {
+         *factory = &application_languages.IActivationFactory_iface;
+--- a/dlls/windows.globalization/private.h
++++ b/dlls/windows.globalization/private.h
+@@ -38,6 +38,7 @@
+ #include "windows.system.userprofile.h"
+ 
+ extern IActivationFactory *geographic_region_factory;
++extern IActivationFactory *calendar_factory_iface;
+ 
+ #include "wine/debug.h"
+ #include "wine/list.h"
