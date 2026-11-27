@@ -86,22 +86,28 @@ def restore_crash_handler(p, saved: dict):
 # Runs on the host, where Wine's processes are (the sandbox's /proc shows only the
 # sandbox). Finds the program by its name (Wine sets comm to the exe's name, cut
 # to 15 characters) in this prefix, samples its threads every 3 s, and stops once
-# the program has come and gone. The stat fields are counted after "(comm) ",
-# which may hold spaces: utime and stime (fields 14 and 15) are then $12 and $13.
-SAMPLER = r"""seen=
+# the program has come and gone. Each sample lists the 12 threads that used the
+# most CPU since the one before (a busy loop stands out; a deadlock is all zeros),
+# with the thread's total too. The stat fields are counted after "(comm) ", which
+# may hold spaces: utime and stime (fields 14 and 15) are then $12 and $13.
+SAMPLER = r"""pid= prev=
 while :; do
-  pid=
-  for p in /proc/[0-9]*; do
-    [ "$(cat "$p/comm" 2>/dev/null)" = "$VSTENV_COMM" ] || continue
-    tr '\0' '\n' < "$p/environ" 2>/dev/null | grep -qxF -- "WINEPREFIX=$VSTENV_PREFIX" && { pid=${p#/proc/}; break; }
-  done
+  state=$(sed 's/.*) //' "/proc/$pid/stat" 2>/dev/null | cut -c1)     # gone, or a zombie (Z): ended
+  if [ -z "$pid" ] || [ -z "$state" ] || [ "$state" = Z ]; then
+    [ -n "$pid" ] && exit 0
+    for p in /proc/[0-9]*; do
+      [ "$(cat "$p/comm" 2>/dev/null)" = "$VSTENV_COMM" ] || continue
+      tr '\0' '\n' < "$p/environ" 2>/dev/null | grep -qxF -- "WINEPREFIX=$VSTENV_PREFIX" && { pid=${p#/proc/}; break; }
+    done
+  fi
   if [ -n "$pid" ]; then
-    seen=1
-    { echo "### $(date +%T) pid $pid: cpu-ticks tid name wchan"
-      for t in /proc/$pid/task/*; do
-        echo "$(sed 's/.*) //' "$t/stat" 2>/dev/null | awk '{print $12+$13}') ${t##*/} $(cat "$t/comm" 2>/dev/null) $(cat "$t/wchan" 2>/dev/null)"
-      done | sort -rn | head -12; } >> "$VSTENV_OUT"
-  elif [ -n "$seen" ]; then exit 0
+    cur=$(for t in /proc/$pid/task/*; do
+      echo "${t##*/} $(sed 's/.*) //' "$t/stat" 2>/dev/null | awk '{print $12+$13}') $(tr ' ' _ < "$t/comm" 2>/dev/null) $(cat "$t/wchan" 2>/dev/null)"
+    done)
+    { echo "### $(date +%T) pid $pid: cpu-ticks-since-last total tid name wchan"
+      printf '%s\n' "$cur" | PREV="$prev" awk 'BEGIN { n = split(ENVIRON["PREV"], l, "\n"); for (i = 1; i <= n; i++) { split(l[i], f, " "); was[f[1]] = f[2] } }
+        NF >= 2 { print $2 - ($1 in was ? was[$1] : 0), $2, $1, $3, $4 }' | sort -rn | head -12; } >> "$VSTENV_OUT"
+    prev=$cur
   fi
   sleep 3
 done"""
