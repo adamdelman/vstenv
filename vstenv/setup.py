@@ -22,6 +22,7 @@ def prepare(p: Prefix, reporter=None):
     _guarded(r, "7-Zip", lambda: tools.ensure(r))
     p.create(r); p.declare_wine(r); p.refresh_builtins(r); runtime.install(p, r)
     _guarded(r, "Wine fixes (patched DLLs)", lambda: winefixes.install(p.build, r))   # dcomp for Steinberg; needs the release asset
+    _guarded(r, "WinRT classes", lambda: winefixes.register_classes(p, r))
     _guarded(r, "WineASIO", lambda: wineasio.refresh(p, r))   # opt-in: only an existing registration is kept current
     _guarded(r, "Installing DXVK", lambda: dxvk.install(p, r))     # skipped without a hardware Vulkan driver
     p.wait_idle()
