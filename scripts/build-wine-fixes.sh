@@ -87,7 +87,7 @@ echo "== configure again, with X/OpenGL/Vulkan, for the unix libraries"
     --without-gstreamer --without-wayland --without-dbus --without-usb --without-udev \
     --without-gnutls --without-krb5 --without-sane --without-gphoto --without-cups --without-netapi \
     --without-opencl --without-pcap --without-pcsclite --without-capi --without-v4l2 --without-oss --without-ffmpeg \
-    --without-inotify --without-sdl >/dev/null
+    --without-sdl >/dev/null
 # Every optional part the pinned winex11.so has; a missing -dev package would
 # silently drop one (XInput2 is the mouse, Xcursor the pointer themes).
 for FEATURE in SONAME_LIBXCURSOR SONAME_LIBXI SONAME_LIBXRANDR SONAME_LIBXRENDER SONAME_LIBXFIXES SONAME_LIBXINERAMA \
@@ -101,6 +101,13 @@ for U in "${UNIX_MODULES[@]}"; do
     make -j"$(nproc)" "$(unix_module_path "$U")" >/dev/null
     strip --strip-unneeded -o "$PKG/x86_64-unix/$U" "$SRC/$(unix_module_path "$U")" 2>/dev/null || cp "$SRC/$(unix_module_path "$U")" "$PKG/x86_64-unix/$U"
 done
+# wineserver (bin/): time-critical threads (audio callbacks) get SCHED_FIFO where
+# RLIMIT_RTPRIO allows. Built from the second configure, which keeps inotify (the
+# server's directory change notifications) as the pinned build has it.
+echo "== build wineserver"
+make -j"$(nproc)" server/wineserver >/dev/null
+mkdir -p "$PKG/bin"
+strip --strip-unneeded -o "$PKG/bin/wineserver" server/wineserver
 # WineASIO (ASIO over JACK/PipeWire): a Winelib library, so it is built with the patched
 # tree's own winegcc/winebuild against the unix-side import libraries. Wine loads its
 # unix half only under the name wineasio.dll.so (the AUR's wineasio64.dll.so is ignored);
@@ -158,7 +165,7 @@ import hashlib, json, os, sys
 from pathlib import Path
 pkg, version, patches = Path(sys.argv[1]), sys.argv[2], [os.path.basename(p) for p in sys.argv[3:]]
 files = {f.relative_to(pkg).as_posix(): hashlib.sha256(f.read_bytes()).hexdigest()
-         for f in sorted(pkg.rglob("*")) if f.is_file() and f.suffix in (".dll", ".exe", ".sys", ".so")}
+         for f in sorted(pkg.rglob("*")) if f.is_file() and (f.suffix in (".dll", ".exe", ".sys", ".so") or f.name == "wineserver")}
 (pkg / "manifest.json").write_text(json.dumps({"wine_version": version, "files": files, "patches": patches,
     "note": "dcomp: DirectComposition for Steinberg's products; advapi32: credential attributes for Steinberg's License Engine sign-in"}, indent=2))
 EOF

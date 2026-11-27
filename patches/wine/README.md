@@ -775,3 +775,27 @@ the driver reads from `HKCU\Software\Wine\WineASIO` when a program opens it.
 Checked with the ASIO client: after `inputs 4`, `fixed-buffer 0`, `buffer 256`
 the driver reports 4 inputs and a 16 to 8192 range with 256 preferred, and
 `ControlPanel()` runs the launcher.
+
+## server-realtime-priority-<version>.patch
+
+Wine's server maps a thread's Windows priority to a nice value only ("FIXME:
+handle realtime priorities"), so the threads a DAW marks
+`THREAD_PRIORITY_TIME_CRITICAL` for its audio (Cubase's 14 "Audio Realtime"
+workers) ran `SCHED_OTHER` at nice -11 and lost the CPU to ordinary work. At a
+64-sample WineASIO buffer (1.33 ms) that dropped whole periods in Cubase 14, 15
+and 16. The patch puts a time-critical thread, and every thread of a
+`REALTIME_PRIORITY_CLASS` process, on `SCHED_FIFO` 70 (time-critical in a normal
+class) to 80 (time-critical in the realtime class), below PipeWire's data loop
+(83 here, 88 by default) and JACK's, and capped by `RLIMIT_RTPRIO`. It uses
+`SCHED_RESET_ON_FORK`, so a child process never inherits it, and puts a thread
+back on `SCHED_OTHER` when its priority drops. With `RLIMIT_RTPRIO` 0 (no
+`@audio`/`@realtime` limits), or when the kernel refuses, nothing changes: the
+nice mapping applies as before. Wine-Staging carried an opt-in version of this
+(`server-Realtime_Priority`, set by `STAGING_RT_PRIORITY_BASE`) until February
+2025; this one needs no variable. Only `bin/wineserver` is rebuilt, from the
+second configure (which keeps inotify, as the pinned build has it).
+
+Checked with a test program (`SetThreadPriority` time-critical, then normal):
+stock, the thread runs `TS` nice -11; patched, `FF` 70, then `TS` nice 0 again;
+in the realtime class `FF` 75 to 80; under `prlimit --rtprio=0` (both for the
+server and for the client only) `TS` nice -11, no message.

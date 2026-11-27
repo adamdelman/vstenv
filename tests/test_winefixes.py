@@ -27,6 +27,10 @@ def _tarball(tmp: Path, version="11.17", payload=b"patched dcomp") -> Path:
 class WineFixesTest(unittest.TestCase):
     def test_version_comes_from_the_build_name(self):
         self.assertEqual(winefixes.wine_version(), "11.17"); self.assertEqual(winefixes.asset_name(), "wine-fixes-11.17.tar.gz")
+    def test_wineserver_goes_to_the_build_bin(self):
+        b = wine.WineBuild(Path("/w"))
+        self.assertEqual(winefixes.dest(b, "bin/wineserver"), Path("/w/bin/wineserver"))
+        self.assertEqual(winefixes.dest(b, "x86_64-unix/win32u.so"), Path("/w/lib/wine/x86_64-unix/win32u.so"))
     def test_install_keeps_the_original_and_verifies_by_hash(self):
         with tempfile.TemporaryDirectory() as d:
             tmp = Path(d); b = _fake_build(tmp); tgz = _tarball(tmp)

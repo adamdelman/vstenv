@@ -54,6 +54,7 @@ FIXES = {"dcomp.dll": "DirectComposition (Steinberg's VSTGUI: HALion Sonic 7, Cu
          "nirescan.exe": "NI controllers plugged in after Wine started are seen (Komplete Kontrol keyboards, Maschine; from ni-wine)",
          "x86_64-unix/winex11.so": "a cursor set from another process shows as an arrow, not nothing (WebView2 windows: Minimal Hub); a dropped file's dialog takes clicks, one taskbar click restores a minimized window, and closing a window ends its open menu first (Cubase 14)",
          "x86_64-unix/win32u.so": "menu icons keep their alpha (32-bit menu bitmaps are alpha-blended); built with FreeType and fontconfig",
+         "bin/wineserver": "time-critical threads (Cubase's audio workers) run SCHED_FIFO 70-80 where RLIMIT_RTPRIO allows (WineASIO at 64 samples dropped periods)",
          "msi.dll": "a feature's cost over its children reads the child features (Cubase 16's Setup.exe crashed in MsiGetFeatureCost, so the Download Assistant's install failed)",
          "windows.globalization.dll": "the Windows.Globalization.Calendar class (Cubase 14-16's head-tracking module died at start without it)",
          "windows.perception.stub.dll": "SpatialLocator.GetDefault says \"no headset\" (Cubase 14-16's head-tracking module died at start)"}
@@ -65,7 +66,8 @@ WINRT_CLASSES = {"windows.globalization.dll": "Windows.Globalization.Calendar",
 def dest(build: wine.WineBuild, name: str) -> Path:
     """Where a packaged file goes in the Wine build: a bare name is a 64-bit PE
     module (lib/wine/x86_64-windows); a name with a folder, such as
-    i386-windows/powershell.exe, is relative to lib/wine."""
+    i386-windows/powershell.exe, is relative to lib/wine; bin/wineserver to the build's root."""
+    if name.startswith("bin/"): return build.root / name
     return build.root / ("lib/wine/" + name if "/" in name else f"{PE_DIR}/{name}")
 
 def wine_version(build=None) -> str:

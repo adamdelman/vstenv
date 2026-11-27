@@ -1,0 +1,40 @@
+--- a/server/thread.c
++++ b/server/thread.c
+@@ -183,11 +183,19 @@
+ 
+ #if defined(__linux__) && defined(RLIMIT_NICE)
+ static int nice_limit;
++static int rt_limit;  /* highest SCHED_FIFO priority RLIMIT_RTPRIO allows, 0 for none */
++
++#ifndef SCHED_RESET_ON_FORK
++#define SCHED_RESET_ON_FORK 0x40000000
++#endif
+ 
+ void init_threading(void)
+ {
+     struct rlimit rlimit;
+ 
++    if (!getrlimit( RLIMIT_RTPRIO, &rlimit ))
++        rt_limit = rlimit.rlim_cur == RLIM_INFINITY ? 99 : min( rlimit.rlim_cur, 99 );
++
+     /* if wineserver has cap_sys_nice we are unlimited, but leave -20 to the user */
+     if (!setpriority( PRIO_PROCESS, getpid(), -20 )) nice_limit = -19;
+     setpriority( PRIO_PROCESS, getpid(), 0 );
+@@ -207,6 +215,17 @@
+ {
+     int min = -nice_limit, max = nice_limit, range = max - min, niceness;
+     int effective_priority = get_effective_thread_priority( thread );
++    struct sched_param param = { 0 };
++
++    /* time-critical and realtime-class threads (audio callbacks) run SCHED_FIFO 70-80,
++     * below PipeWire's and JACK's own audio threads, when RLIMIT_RTPRIO allows it */
++    if (rt_limit && (thread->base_priority == THREAD_PRIORITY_TIME_CRITICAL || effective_priority >= LOW_REALTIME_PRIORITY))
++    {
++        param.sched_priority = min( rt_limit, 70 + (effective_priority - 15) * 10 / 16 );
++        if (!sched_setscheduler( thread->unix_tid, SCHED_FIFO | SCHED_RESET_ON_FORK, &param )) return;
++    }
++    else if (rt_limit && (sched_getscheduler( thread->unix_tid ) & ~SCHED_RESET_ON_FORK) == SCHED_FIFO)
++        sched_setscheduler( thread->unix_tid, SCHED_OTHER | SCHED_RESET_ON_FORK, &param );
+ 
+     if (nice_limit >= 0) return;
+ 
