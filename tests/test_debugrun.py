@@ -5,7 +5,8 @@ from vstenv import cli, debugrun, paths, programs, report, wine
 
 class FakePrefix:
     """Registry as a dict; reg_import_values applies what the .reg file would."""
-    def __init__(self, reg, path=Path("/pfx")): self.reg = reg; self.debug = None; self.path = path
+    def __init__(self, reg, path=Path("/pfx"), running=()): self.reg = reg; self.debug = None; self.path = path; self.running = running
+    def is_running(self, exe): return exe in self.running
     def reg_query(self, key): return dict(self.reg.get(key, {}))
     def reg_import_values(self, values, name=""):
         for key, vals in values.items():
@@ -74,6 +75,12 @@ class DebugRunTest(unittest.TestCase):
         self.assertEqual(ss.call_args.args[1:], ("Cubase14.exe", d / "threads.log")); sampler.terminate.assert_called_once()
         self.assertIsNone(p.debug); self.assertEqual(p.reg[WINEDBG], {})
         self.assertTrue(d.name.startswith("debug-Cubase-14-")); self.assertEqual((d / "sysinfo.txt").read_text(), "info\n")
+
+    def test_refuses_when_already_running(self):
+        p = FakePrefix({}, running=("Cubase14.exe",)); prog = mock.Mock(exe="C:\\x\\Cubase14.exe"); prog.name = "Cubase 14"
+        with mock.patch.object(programs, "run") as run, self.assertRaisesRegex(RuntimeError, "already running"):
+            debugrun.run(p, prog)
+        run.assert_not_called(); self.assertEqual(p.reg, {}); self.assertEqual(list(self.d.iterdir()), [])
 
     def test_restored_when_the_launch_fails(self):
         p = FakePrefix({}); prog = mock.Mock(exe=""); prog.name = "x"

@@ -167,6 +167,9 @@ def sysinfo(p, topic: str) -> str:
 def run(p, prog, topic="crash", reporter=None) -> Path:
     """Run `prog` with debug logging until it exits; returns the debug directory."""
     from . import programs
+    exe = prog.exe.rsplit("\\", 1)[-1] if prog.exe else ""
+    # a second launch hands over to the running copy, which has none of the logging
+    if exe and p.is_running(exe): raise RuntimeError(f"{prog.name} is already running: close it, then start the debug run again")
     d = debug_dir(prog.name); d.mkdir(parents=True, exist_ok=True)
     (d / "sysinfo.txt").write_text(sysinfo(p, topic))
     saved = set_crash_handler(p)
@@ -174,7 +177,7 @@ def run(p, prog, topic="crash", reporter=None) -> Path:
     sampler = None
     try:
         proc = programs.run(p, prog, reporter)
-        if prog.exe: sampler = start_sampler(p, prog.exe.rsplit("\\", 1)[-1], d / "threads.log")
+        if exe: sampler = start_sampler(p, exe, d / "threads.log")
         # shortcut: waits for the process started, not for programs it hands off
         # to; a launcher that exits at once ends the debug session early.
         try: proc.wait()
