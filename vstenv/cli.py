@@ -299,7 +299,12 @@ def cmd_recipe(a):
 
 def cmd_run(a):
     p = _prefix(); r = ConsoleReporter()
+    from . import debugrun
+    if a.debug and a.debug not in debugrun.TOPIC_NAMES and a.name is None: a.name, a.debug = a.debug, "crash"   # run --debug NAME
+    if a.name is None: sys.exit(f"usage: {APP_NAME} run <name> [--debug[={'|'.join(debugrun.TOPIC_NAMES)}]]")
+    if a.debug and a.debug not in debugrun.TOPIC_NAMES: sys.exit(f"--debug takes one of: {', '.join(debugrun.TOPIC_NAMES)}")
     prog = programs.find(p, a.name)
+    if a.debug: return _run_debug(p, prog, a.debug, r)
     try: proc = programs.run(p, prog, r)
     except RuntimeError as e: sys.exit(str(e))
     if a.wait:
@@ -315,6 +320,18 @@ def cmd_run(a):
         _join_window_watch(proc)
         programs.watch_plugins(p, proc, lambda: setup.after_change(p, r))
         setup.after_change(p, r)
+
+def _run_debug(p, prog, topic, r):
+    from . import debugrun
+    print(f"Running {prog.name} with {topic} logging. Reproduce the problem, then close it (or let it crash); Ctrl+C stops logging.\n"
+          f"If it hangs, run in another terminal: {APP_NAME} hang-dump")
+    try: d = debugrun.run(p, prog, topic, r)
+    except RuntimeError as e: sys.exit(str(e))
+    print(f"\nDebug logs: {d}\nNow run: {APP_NAME} report  (it includes these logs, with serials, licence tokens and your home path removed)")
+
+def cmd_hang_dump(a):
+    from . import debugrun
+    print(f"wrote {debugrun.hang_dump(_prefix())}\nNow run: {APP_NAME} report")
 
 def _join_window_watch(proc, seconds=40.0):
     """Wait for the window watcher programs.run attached (it fixes a window the WM
@@ -451,7 +468,8 @@ def cmd_report(a):
     b = wine.installed_build(); p = wine.Prefix(paths.PREFIX, b) if b else None
     if a.summary_only: print(report.summary(p)); return
     dest = report.write_bundle(Path(a.output) if a.output else None, p)
-    print(f"wrote {dest}\nIt contains a summary and this app's logs, with serials, licence tokens and your home directory removed.")
+    print(f"wrote {dest}\nIt contains a summary, this app's logs and the last debug run's logs, with serials, licence tokens and your home directory removed;"
+          " and Cubase's newest crash dump, if there is one, as it is.")
 
 def cmd_rescue(a):
     p = _prefix(); r = ConsoleReporter(); res = []
@@ -502,7 +520,10 @@ def main(argv=None):
     s.add_argument("name", help="program name, or part of it")
     s.add_argument("state", nargs="?", choices=["on", "off"], help="omit to show the current setting")
     s.set_defaults(f=cmd_unmanaged)
-    s = sp.add_parser("run", help="start an installed program (name or part of it)"); s.add_argument("name"); s.add_argument("--wait", action="store_true"); s.set_defaults(f=cmd_run)
+    s = sp.add_parser("run", help="start an installed program (name or part of it)"); s.add_argument("name", nargs="?"); s.add_argument("--wait", action="store_true")
+    s.add_argument("--debug", nargs="?", const="crash", metavar="TOPIC",
+                   help="run it once with debug logging (crash, graphics, windows, dragdrop or all; default crash) into a directory `report` includes; waits for it to exit"); s.set_defaults(f=cmd_run)
+    sp.add_parser("hang-dump", help="while a program hangs: write every thread's backtrace into the newest debug log directory").set_defaults(f=cmd_hang_dump)
     s = sp.add_parser("uninstall", help="uninstall a program (its own uninstaller) or a vendor product without one (an NI application or library)"); s.add_argument("name"); s.add_argument("--no-sync", action="store_true"); s.set_defaults(f=cmd_uninstall)
     s = sp.add_parser("remove-environment", help="delete the prefix and everything setup made (bridged plugins, menu and file manager entries, URL handlers), so the next start sets up fresh")
     s.add_argument("--downloads", action="store_true", help="also delete the cached downloads (~/.cache/vstenv)"); s.add_argument("--yes", action="store_true", help="do not ask"); s.set_defaults(f=cmd_remove_environment)

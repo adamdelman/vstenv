@@ -11,7 +11,7 @@ list every option.
 ```
 vstenv setup [--installer FILE]     vstenv vendors            vstenv manager <vendor> install|launch|repair|status
 vstenv products [--vendor V]        vstenv install FILE|DIR   vstenv sync [DIR...]
-vstenv programs | run NAME | uninstall NAME | menu [update|remove] | remove-environment [--downloads]
+vstenv programs | run NAME [--debug[=crash|graphics|windows|dragdrop|all]] | hang-dump | uninstall NAME | menu [update|remove] | remove-environment [--downloads]
 vstenv doctor | report | rescue-install | finish-installs | dxvk | wine-fixes | mono | webview2 | prefixes | url-handlers
 vstenv manager <vendor> apply-pending-update   install an update the manager downloaded for itself but did not install
 vstenv wedge [status|clear]        no Wine GUI can open a window: show it, or restart (and boot) the Wine session
