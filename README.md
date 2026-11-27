@@ -207,7 +207,8 @@ terminal:
   ```
 - **It draws wrong, or windows, menus or focus misbehave:** use
   `--debug=graphics` or `--debug=windows` in place of `--debug`
-  (`--debug=dragdrop` for drag and drop).
+  (`--debug=dragdrop` for drag and drop, `--debug=loader` when it says a DLL
+  is missing).
 
 Close the program when you're done, then save the report:
 
