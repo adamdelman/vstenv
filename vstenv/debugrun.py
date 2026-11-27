@@ -26,11 +26,13 @@ from . import host, paths
 # led to it); +loaddll one line per DLL, native or builtin; warn+module why a DLL or
 # import failed to load (the usual start-up crash) -- the full +module trace is half
 # of a Cubase start's log (a line per PE section and thread), so only the loader
-# topic has it; +timestamp,+pid order events and
-# tell processes apart (Wine prefixes the thread id itself; there is no +tid);
-# err+all is Wine's own errors; fixme-all drops the unimplemented-function chatter.
+# topic has it; +combase names a WinRT class a program asked for and could not get
+# (Cubase's headtracking.dll dies of that), in a few lines; +timestamp,+pid order
+# events and tell processes apart (Wine prefixes the thread id itself; there is no
+# +tid); err+all is Wine's own errors; fixme-all drops the unimplemented-function
+# chatter (a named channel such as +combase keeps its fixmes).
 # Never +relay: gigabytes a minute. A 1-2 minute session stays in the tens of MB.
-CRASH = ["+timestamp", "+pid", "+seh", "+loaddll", "warn+module", "err+all", "fixme-all"]
+CRASH = ["+timestamp", "+pid", "+seh", "+loaddll", "warn+module", "+combase", "err+all", "fixme-all"]
 TOPICS = {
     "crash": [],
     "graphics": ["+d2d", "+dcomp", "+dxgi", "+d3d11"],    # plus DXVK's log (debug_env)
