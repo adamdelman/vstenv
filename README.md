@@ -189,11 +189,9 @@ Known problems and what to do:
   your password, then click Activate. Red text under the button tells you if
   you made a typo.
 - **Clicks or dropouts at small ASIO buffer sizes:** your user needs real-time
-  rights, which **Health** checks. Arch: install `realtime-privileges` and run
-  `sudo usermod -aG realtime $USER`. Fedora: install `realtime-setup` and run the
-  same command. Debian/Ubuntu: `sudo usermod -aG audio $USER`, with
-  `@audio - rtprio 95` in `/etc/security/limits.d/audio.conf`. Then log out and
-  back in. A buffer of 128 or more is safest.
+  rights, which **Health** checks. Click **Health → Real-time audio** (or run
+  `vstenv realtime enable`), enter your password, then log out and back in.
+  A buffer of 128 or more is safest.
 - **32-bit plugins aren't supported.** Use the 64-bit version, which almost
   every current plugin has.
 
