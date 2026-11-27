@@ -783,9 +783,11 @@ handle realtime priorities"), so the threads a DAW marks
 `THREAD_PRIORITY_TIME_CRITICAL` for its audio (Cubase's 14 "Audio Realtime"
 workers) ran `SCHED_OTHER` at nice -11 and lost the CPU to ordinary work. At a
 64-sample WineASIO buffer (1.33 ms) that dropped whole periods in Cubase 14, 15
-and 16. The patch puts a time-critical thread, and every thread of a
-`REALTIME_PRIORITY_CLASS` process, on `SCHED_FIFO` 70 (time-critical in a normal
-class) to 80 (time-critical in the realtime class), below PipeWire's data loop
+and 16. The patch puts a thread of priority 15 or more (time-critical, or a
+priority set as an absolute value, as Cubase sets its audio threads: they do not
+have a time-critical base priority), and so every thread of a
+`REALTIME_PRIORITY_CLASS` process, on `SCHED_FIFO` 70 (priority 15) to 80
+(priority 31), below PipeWire's data loop
 (83 here, 88 by default) and JACK's, and capped by `RLIMIT_RTPRIO`. It uses
 `SCHED_RESET_ON_FORK`, so a child process never inherits it, and puts a thread
 back on `SCHED_OTHER` when its priority drops. A thread that is already realtime

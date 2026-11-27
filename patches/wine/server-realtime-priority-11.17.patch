@@ -72,7 +72,7 @@
      /* if wineserver has cap_sys_nice we are unlimited, but leave -20 to the user */
      if (!setpriority( PRIO_PROCESS, getpid(), -20 )) nice_limit = -19;
      setpriority( PRIO_PROCESS, getpid(), 0 );
-@@ -207,6 +267,30 @@
+@@ -207,6 +267,31 @@
  {
      int min = -nice_limit, max = nice_limit, range = max - min, niceness;
      int effective_priority = get_effective_thread_priority( thread );
@@ -86,7 +86,8 @@
 +        policy = sched_getscheduler( thread->unix_tid ) & ~SCHED_RESET_ON_FORK;
 +        /* a thread made realtime by someone else (pipewire-jack's data loop) is left alone */
 +        if (!thread->rt_priority && (policy == SCHED_FIFO || policy == SCHED_RR)) return;
-+        if (thread->base_priority == THREAD_PRIORITY_TIME_CRITICAL || effective_priority >= LOW_REALTIME_PRIORITY)
++        /* priority 15 and up: time-critical, or set as an absolute priority (Cubase's audio threads) */
++        if (thread->priority >= LOW_REALTIME_PRIORITY - 1)
 +        {
 +            param.sched_priority = min( rt_limit, 70 + (effective_priority - 15) * 10 / 16 );
 +            if (!sched_setscheduler( thread->unix_tid, SCHED_FIFO | SCHED_RESET_ON_FORK, &param ))
@@ -103,7 +104,7 @@
  
      if (nice_limit >= 0) return;
  
-@@ -369,6 +453,8 @@
+@@ -369,6 +454,8 @@
      thread->priority        = 0;
      thread->base_priority   = 0;
      thread->disable_boost   = 0;
