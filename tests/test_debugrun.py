@@ -89,14 +89,22 @@ class DebugRunTest(unittest.TestCase):
         self.assertIn('"A"=-', text); self.assertIn('"B"="v"', text)
 
     def test_sampler_writes_the_programs_threads(self):
-        """The host script, run here against a stand-in process with the prefix in its environment."""
+        """The host script, run here against a stand-in process with the prefix in its environment:
+        a busy one, so the second sample shows CPU used since the first."""
+        import sys
         out = self.d / "threads.log"; pfx = str(self.d / "pfx")
-        prog = subprocess.Popen(["sleep", "4"], env={**os.environ, "WINEPREFIX": pfx})
-        s = debugrun.start_sampler(mock.Mock(path=pfx), "sleep", out)
-        try: s.wait(15)                                     # it stops once the program has gone
+        prog = subprocess.Popen([sys.executable, "-c", "import time\nt = time.time() + 5\nwhile time.time() < t: pass"],
+                                env={**os.environ, "WINEPREFIX": pfx})
+        comm = Path(f"/proc/{prog.pid}/comm").read_text().strip()
+        s = debugrun.start_sampler(mock.Mock(path=pfx), comm, out)
+        try: s.wait(20)                                     # it stops once the program has gone
         finally: s.kill(); prog.kill()
-        text = out.read_text()
-        self.assertIn(f"pid {prog.pid}", text); self.assertRegex(text, rf"\n\d+ {prog.pid} sleep ")
+        samples = [b.splitlines() for b in out.read_text().split("### ")[1:]]
+        self.assertGreaterEqual(len(samples), 2)
+        self.assertIn(f"pid {prog.pid}", samples[0][0])
+        delta, total, tid, name = samples[1][1].split()[:4]
+        self.assertEqual((tid, name), (str(prog.pid), comm))       # the busy thread is on top
+        self.assertGreater(int(delta), 100); self.assertGreaterEqual(int(total), int(delta))
 
     def test_hang_dump_goes_to_the_newest_dir(self):
         old = self.d / "debug-a-1"; new = self.d / "debug-b-2"; old.mkdir(); new.mkdir(); os.utime(old, (1, 1))

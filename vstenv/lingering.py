@@ -42,17 +42,17 @@ def pipe_of(fileobj) -> str | None:
 
 # Walks the host's /proc, because a sandboxed vstenv sees only its own in its
 # namespace while every Wine process of ours runs on the host (host.py).
-_SCAN = r"""for p in /proc/[0-9]*; do
-  pid=${p#/proc/}
+_SCAN = r"""set -f
+for t in $VSTENV_PIPES; do
+  set -- "$@" -o -lname "$(printf '%s' "$t" | sed 's/[][*?\\]/\\&/g')"
+done
+shift; set +f
+# one find reads every fd link itself: a readlink process per fd took seconds
+find /proc/[0-9]*/fd -mindepth 1 -maxdepth 1 \( "$@" \) -printf '%h\n' 2>/dev/null | sort -u |
+while read -r d; do
+  p=${d%/fd}; pid=${p#/proc/}
   [ "$pid" = "$$" ] && continue
-  [ -d "$p/fd" ] || continue
-  for fd in "$p"/fd/*; do
-    [ -L "$fd" ] || continue
-    t=$(readlink "$fd" 2>/dev/null)
-    case " $VSTENV_PIPES " in
-      *" $t "*) printf '%s\t%s\n' "$pid" "$(cat "$p/comm" 2>/dev/null)"; break ;;
-    esac
-  done
+  printf '%s\t%s\n' "$pid" "$(cat "$p/comm" 2>/dev/null)"
 done"""
 
 
