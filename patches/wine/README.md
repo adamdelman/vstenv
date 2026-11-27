@@ -792,7 +792,16 @@ back on `SCHED_OTHER` when its priority drops. A thread that is already realtime
 and that the server did not make so is left alone: WineASIO's callback runs in
 pipewire-jack's data loop, a Wine thread PipeWire itself puts on FIFO 83, and a
 host calling `SetThreadPriority` on it must neither lower it to 70 nor drop it to
-`SCHED_OTHER`. With `RLIMIT_RTPRIO` 0 (no
+`SCHED_OTHER`.
+
+Realtime throttling can be off (`sched_rt_runtime_us` -1, or equal to the
+period, as on the machine this was made on), and then a `SCHED_FIFO` thread that
+spins keeps its CPU for good. So the server checks every second, while it has
+made any thread realtime, how much CPU each such thread used (`schedstat`): one
+that ran more than 90% of the last second goes back to `SCHED_OTHER` (its nice
+value) for a second, then realtime again, much as Windows' MMCSS holds back a
+thread that overruns its share. An audio thread that sleeps between periods is
+never held back. With `RLIMIT_RTPRIO` 0 (no
 `@audio`/`@realtime` limits), or when the kernel refuses, nothing changes: the
 nice mapping applies as before. Wine-Staging carried an opt-in version of this
 (`server-Realtime_Priority`, set by `STAGING_RT_PRIORITY_BASE`) until February
@@ -802,5 +811,7 @@ second configure (which keeps inotify, as the pinned build has it).
 Checked with a test program (`SetThreadPriority` time-critical, then normal):
 stock, the thread runs `TS` nice -11; patched, `FF` 70, then `TS` nice 0 again;
 in the realtime class `FF` 75 to 80; a thread put on `FF` 83 from outside stays
-`FF` 83 through time-critical and back to normal; under `prlimit --rtprio=0` (both for the
+`FF` 83 through time-critical and back to normal; a time-critical thread that
+spins alternates a second at `FF` 70 and a second at `TS` nice -11, while one that
+works 1 ms in 3 stays `FF` 70; under `prlimit --rtprio=0` (both for the
 server and for the client only) `TS` nice -11, no message.
