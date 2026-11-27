@@ -305,8 +305,10 @@ jobs:
   pages:
     name: Publish the Flatpak repo
     needs: [auto-tag, flatpak, release]
+    # Upstream only: a fork has no FLATPAK_GPG_KEY (no ostree repo to publish) and no Pages site.
     if: >-
-      always()
+      github.repository == 'dguedry/vstenv'
+      && always()
       && needs.flatpak.result == 'success'
       && needs.release.result == 'success'
     runs-on: ubuntu-latest

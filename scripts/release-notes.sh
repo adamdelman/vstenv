@@ -19,7 +19,9 @@ print(html.unescape(m.group(1).strip()) if m else "")
 PY
 )"
 PREV="$(git -C "$HERE" tag --list 'v*' --sort=-version:refname | grep -vx "$TAG" | head -1 || true)"
+REPO="${GITHUB_REPOSITORY:-dguedry/vstenv}"   # a fork's test release links its own repo
 WINE="$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); from vstenv.wine import WINE_BUILD; print(WINE_BUILD["name"])' "$HERE")"
+if [ "$REPO" = dguedry/vstenv ]; then
 cat <<MD
 ## Install
 
@@ -37,6 +39,22 @@ Already on the repo? Just \`flatpak update\`. Prefer a single file? Download
 automatic updates that way). Either needs the Flathub remote for the GNOME
 runtime; on first run the app downloads the rest by itself.
 
+MD
+else   # a fork has no hosted Flatpak repo (no signing key, no Pages): the bundle is the install
+cat <<MD
+## Install
+
+This is a test build from $REPO. Download \`vstenv.flatpak\` below, then:
+
+\`\`\`sh
+flatpak install --user vstenv.flatpak
+\`\`\`
+
+It needs the Flathub remote for the GNOME runtime; on first run the app downloads the rest by itself.
+
+MD
+fi
+cat <<MD
 ## The other files
 
 You do not need to download these. The app fetches them from this page when
@@ -54,5 +72,5 @@ ${NOTE:-See the commits below.}
 MD
 if [ -n "$PREV" ]; then
   echo
-  echo "**Full Changelog**: https://github.com/dguedry/vstenv/compare/$PREV...$TAG"
+  echo "**Full Changelog**: https://github.com/$REPO/compare/$PREV...$TAG"
 fi
