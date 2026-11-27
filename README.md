@@ -176,6 +176,42 @@ loads these plugins too.
    [open an issue](https://github.com/dguedry/vstenv/issues) with it attached.
    The report leaves out your serial numbers, licence tokens and home folder path.
 
+### Reporting a crash or bug
+
+If a program crashes, hangs or draws wrong, run it once with debug logging,
+make the problem happen, then save a report. Use the program's name as the
+Programs tab shows it (part of the name is enough). Copy and paste these into a
+terminal:
+
+- **It crashes:**
+  ```sh
+  flatpak run --command=vstenv io.github.dguedry.vstenv run --debug "Cubase 14"
+  ```
+- **It hangs (stops responding):** start it as above. When it hangs, wait about
+  20 seconds, then run this in a second terminal:
+  ```sh
+  flatpak run --command=vstenv io.github.dguedry.vstenv hang-dump
+  ```
+- **It draws wrong, or windows, menus or focus misbehave:** use
+  `--debug=graphics` or `--debug=windows` in place of `--debug`
+  (`--debug=dragdrop` for drag and drop, `--debug=loader` when it says a DLL
+  is missing).
+
+Close the program when you're done, then save the report:
+
+```sh
+flatpak run --command=vstenv io.github.dguedry.vstenv report
+```
+
+It writes `vstenv-report-<date>-<time>.tar.gz` to your home folder.
+[Open an issue](https://github.com/dguedry/vstenv/issues) and attach it. The
+report has the app's logs and the last debug run's logs, with serial numbers,
+licence tokens and your home folder path removed, and a list of Cubase's crash
+dumps. The dump files themselves are left out: a dump is a copy of the
+program's memory and may hold your user name and anything it had open. If a
+developer asks for one, add `--with-crash-dump` to the `report` command; the
+newest dump is then included unchanged.
+
 Known problems and what to do:
 
 - **A store app's window stays white or black** (on some graphics drivers):
