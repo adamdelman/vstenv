@@ -935,9 +935,9 @@ class Window(Adw.ApplicationWindow):
 
         Takes a path as str or Path; the flows below want a Path."""
         path = Path(path)
-        if plugfiles.handles(path):
-            self.install_plugin_files(path); return
         kind, v = vendors.classify_installer(path)
+        if kind != "product" and plugfiles.handles(path):   # a vendor's product package is its vendor's
+            self.install_plugin_files(path); return
         if kind == "manager":
             self.toast(f"Recognized the {v.manager_name} installer — installing it with {v.name}'s fixes")
             self.install_manager(v, path)
