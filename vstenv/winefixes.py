@@ -26,10 +26,16 @@ import hashlib, json, os, re, shutil, tarfile, tempfile
 from datetime import date
 from pathlib import Path
 from . import paths, wine
-from .download import fetch, text
+from .download import fetch
 from .progress import null_reporter
 
-RELEASE_REPO = "adamdelman/vstenv"   # cubase14-fixes test build: the patched DLLs come from this fork's release
+RELEASE_REPO = "adamdelman/vstenv"   # Cubase test build: the patched DLLs come from this fork's release
+# The exact tarball this build installs, pinned like wine.WINE_BUILD: a different
+# file (a re-uploaded asset, a swapped download) is refused by its sha256 before
+# anything is unpacked. Its manifest.json then checks every DLL inside.
+WINE_FIXES = {"tag": "PLACEHOLDER",
+              "url": f"https://github.com/{RELEASE_REPO}/releases/download/PLACEHOLDER/wine-fixes-11.17.tar.gz",
+              "sha256": "0" * 64}
 PE_DIR = "lib/wine/x86_64-windows"
 MARKER_NAME = "vstenv-wine-fixes.json"
 FIXES = {"dcomp.dll": "DirectComposition (Steinberg's VSTGUI: HALion Sonic 7, Cubase, Dorico; JUCE 8 GUIs: Spitfire Audio), "
@@ -102,46 +108,35 @@ def status(build: wine.WineBuild | None) -> dict:
     missing = [d for d in FIXES if d not in inst]
     return {"installed": not missing, "files": sorted(inst), "missing": missing, "asset": asset_name(build), "marker": marker(build) if build else None}
 
-def _release(r) -> tuple[dict | None, str]:
-    """The app's latest release (its JSON) and tag, or (None, '') when offline."""
-    try:
-        rel = json.loads(text(f"https://api.github.com/repos/{RELEASE_REPO}/releases/latest"))
-        return rel, rel.get("tag_name", "")
-    except Exception as e:
-        r.log(f"could not read {RELEASE_REPO} releases: {str(e)[:80]}"); return None, ""
-
-def _locate(build, r) -> tuple[Path | None, dict | None, str, str]:
+def _locate(build, r) -> tuple[Path | None, str, str]:
     """Where the fixes come from: VSTENV_WINE_FIXES (a local tarball, for builds made
-    by hand) as a path, else the asset on the app's latest release, not yet fetched.
-    Returns (local path, release asset, label, release tag)."""
+    by hand), else the pinned release asset (WINE_FIXES), not yet fetched.
+    Returns (local path or None, label, tag)."""
     override = os.environ.get("VSTENV_WINE_FIXES")
     if override:
         f = Path(override).expanduser()
-        if f.is_file(): return f, None, f"{f.name} (VSTENV_WINE_FIXES)", "local"
+        if f.is_file(): return f, f"{f.name} (VSTENV_WINE_FIXES)", "local"
         r.log(f"VSTENV_WINE_FIXES={override} does not exist; ignoring")
-    name = asset_name(build)
-    rel, tag = _release(r)
-    if rel is None: return None, None, "", ""
-    a = next((a for a in rel.get("assets", []) if a.get("name") == name), None)
-    return None, a, f"{name} ({RELEASE_REPO} release {tag})" if a else "", tag
+    return None, f"{asset_name(build)} ({RELEASE_REPO} release {WINE_FIXES['tag']})", WINE_FIXES["tag"]
 
 def install(build: wine.WineBuild, reporter=None, force=False) -> dict[str, str]:
-    """Put the release's patched DLLs into the Wine build. Idempotent: nothing is
-    touched when the installed set came from the latest release (or, offline, when
+    """Put the pinned release's patched DLLs into the Wine build. Idempotent: nothing is
+    touched when the installed set came from the pinned tag (or, offline, when
     every file is in place). Returns what is installed."""
     r = null_reporter(reporter)
     r.step("Wine fixes (patched DLLs)")
-    tgz, asset, label, tag = _locate(build, r)
+    tgz, label, tag = _locate(build, r)
     in_place = not status(build)["missing"]
     current = (marker(build) or {}).get("release")
-    available = tgz is not None or asset is not None
-    if not force and in_place and (not available or (tag and tag == current)):
+    if not force and in_place and tag == current:
         r.skip(f"in place: {', '.join(sorted(installed(build)))}" + (f" ({current})" if current else "")); return installed(build)
-    if not available:
-        r.fail(f"no {asset_name(build)} on the latest {RELEASE_REPO} release (or offline); Steinberg's DirectComposition programs stay unavailable")
-        return installed(build)
-    if tgz is None:   # cached per release: the same asset name carries a different build on every release
-        tgz = fetch(asset["browser_download_url"], paths.DOWNLOADS / f"{tag}-{asset_name(build)}", reporter=r, label="wine fixes")
+    if tgz is None:   # cached per tag: the same asset name carries a different build on every release
+        if not WINE_FIXES["url"].endswith("/" + asset_name(build)):
+            r.fail(f"the pinned Wine fixes are not for this Wine ({asset_name(build)}); Steinberg's DirectComposition programs stay unavailable"); return installed(build)
+        try: tgz = fetch(WINE_FIXES["url"], paths.DOWNLOADS / f"{tag}-{asset_name(build)}", sha256=WINE_FIXES["sha256"], reporter=r, label="wine fixes")
+        except Exception as e:   # offline, or the file is not the pinned one: keep what is in place
+            r.fail(f"could not get {label}: {str(e)[:80]}" + ("; keeping the installed set" if in_place else "")); return installed(build)
+            return installed(build)
     with tempfile.TemporaryDirectory(prefix="wine-fixes-") as tmp:
         with tarfile.open(tgz) as t: t.extractall(tmp, filter="tar")
         src = next((d for d in Path(tmp).rglob("manifest.json")), None)

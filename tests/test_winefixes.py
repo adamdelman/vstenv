@@ -86,28 +86,45 @@ class WineFixesTest(unittest.TestCase):
     def test_offline_install_fails_softly_and_keeps_what_is_in_place(self):
         with tempfile.TemporaryDirectory() as d:
             tmp = Path(d); b = _fake_build(tmp); tgz = _tarball(tmp)
-            with mock.patch.dict("os.environ", {"VSTENV_WINE_FIXES": ""}), mock.patch.object(winefixes, "text", side_effect=OSError("offline")):
+            with mock.patch.dict("os.environ", {"VSTENV_WINE_FIXES": ""}), mock.patch.object(winefixes, "fetch", side_effect=OSError("offline")):
                 self.assertEqual(winefixes.install(b), {})
             with mock.patch.dict("os.environ", {"VSTENV_WINE_FIXES": str(tgz)}): winefixes.install(b)
-            with mock.patch.dict("os.environ", {"VSTENV_WINE_FIXES": ""}), mock.patch.object(winefixes, "text", side_effect=OSError("offline")):
+            with mock.patch.dict("os.environ", {"VSTENV_WINE_FIXES": ""}), mock.patch.object(winefixes, "fetch", side_effect=OSError("offline")):
                 self.assertEqual(sorted(winefixes.install(b)), sorted(winefixes.FIXES), "offline: the installed set stays")
-    def test_a_newer_release_replaces_the_installed_set(self):
+    def test_the_pinned_tarball_is_fetched_by_hash_and_a_different_file_is_refused(self):
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d); b = _fake_build(tmp); tgz = _tarball(tmp)
+            sha = hashlib.sha256(tgz.read_bytes()).hexdigest()
+            def pin(tag, sha256):   # a file:// URL goes through the real download and its hash check
+                return mock.patch.object(winefixes, "WINE_FIXES", {"tag": tag, "url": tgz.as_uri(), "sha256": sha256})
+            with mock.patch.dict("os.environ", {"VSTENV_WINE_FIXES": ""}), mock.patch.object(winefixes.paths, "DOWNLOADS", tmp / "dl"):
+                with pin("v1", "0" * 64): self.assertEqual(winefixes.install(b), {})
+                self.assertEqual((b.root / winefixes.PE_DIR / "dcomp.dll").read_bytes(), b"stock dcomp.dll", "a hash mismatch touches nothing")
+                self.assertFalse((tmp / "dl" / "v1-wine-fixes-11.17.tar.gz").exists())
+                with pin("v1", sha): self.assertEqual(sorted(winefixes.install(b)), sorted(winefixes.FIXES))
+                self.assertEqual(winefixes.marker(b)["release"], "v1")
+                with pin("v1", sha), mock.patch.object(winefixes, "fetch") as fetch_mock: winefixes.install(b)
+                fetch_mock.assert_not_called()                      # same pin: nothing fetched, nothing touched
+    def test_a_new_pin_replaces_the_installed_set(self):
         with tempfile.TemporaryDirectory() as d:
             tmp = Path(d); b = _fake_build(tmp)
             def release(tag, payload):
-                rel = {"tag_name": tag, "assets": [{"name": "wine-fixes-11.17.tar.gz", "browser_download_url": "http://x/" + tag}]}
-                tgz = _tarball(tmp / tag, payload=payload) if (tmp / tag).mkdir() is None else None
-                return mock.patch.object(winefixes, "text", return_value=json.dumps(rel)), mock.patch.object(winefixes, "fetch", return_value=tgz)
+                (tmp / tag).mkdir(); tgz = _tarball(tmp / tag, payload=payload)
+                pin = {"tag": tag, "url": f"http://x/{tag}/wine-fixes-11.17.tar.gz", "sha256": "a" * 64}
+                return mock.patch.object(winefixes, "WINE_FIXES", pin), mock.patch.object(winefixes, "fetch", return_value=tgz)
             with mock.patch.dict("os.environ", {"VSTENV_WINE_FIXES": ""}):
                 p1, p2 = release("v0.2.0", b"first")
-                with p1, p2: winefixes.install(b)
-                self.assertEqual((b.root / winefixes.PE_DIR / "dcomp.dll").read_bytes(), b"first"); self.assertEqual(winefixes.marker(b)["release"], "v0.2.0")
                 with p1, p2 as fetch_mock: winefixes.install(b)
-                fetch_mock.assert_not_called()                      # same release: nothing fetched, nothing touched
+                self.assertEqual(fetch_mock.call_args.kwargs["sha256"], "a" * 64)
+                self.assertEqual((b.root / winefixes.PE_DIR / "dcomp.dll").read_bytes(), b"first"); self.assertEqual(winefixes.marker(b)["release"], "v0.2.0")
                 p3, p4 = release("v0.2.1", b"second")
                 with p3, p4: winefixes.install(b)
                 self.assertEqual((b.root / winefixes.PE_DIR / "dcomp.dll").read_bytes(), b"second"); self.assertEqual(winefixes.marker(b)["release"], "v0.2.1")
                 self.assertEqual((b.root / winefixes.PE_DIR / "dcomp.dll.orig").read_bytes(), b"stock dcomp.dll", "the stock file stays the original")
+    def test_the_pin_is_for_the_pinned_wine(self):
+        self.assertTrue(winefixes.WINE_FIXES["url"].endswith("/" + winefixes.asset_name()))
+        self.assertIn("/" + winefixes.WINE_FIXES["tag"] + "/", winefixes.WINE_FIXES["url"])
+        self.assertRegex(winefixes.WINE_FIXES["sha256"], r"^[0-9a-f]{64}$")
     def test_remove_deletes_additions_that_have_no_original(self):
         with tempfile.TemporaryDirectory() as d:
             tmp = Path(d); b = _fake_build(tmp); tgz = _tarball(tmp)
@@ -133,37 +150,6 @@ class WineFixesTest(unittest.TestCase):
             with mock.patch.dict("os.environ", {"VSTENV_WINE_FIXES": str(old)}): got = winefixes.install(b)
             self.assertEqual(sorted(got), sorted(set(winefixes.FIXES) - {"x86_64-unix/win32u.so"}))
             self.assertEqual(sorted(winefixes.status(b)["missing"]), ["x86_64-unix/win32u.so"])
-    def test_install_refuses_a_tarball_for_another_wine(self):
-        with tempfile.TemporaryDirectory() as d:
-            tmp = Path(d); b = _fake_build(tmp); tgz = _tarball(tmp, version="10.0")
-            with mock.patch.dict("os.environ", {"VSTENV_WINE_FIXES": str(tgz)}):
-                self.assertEqual(winefixes.install(b), {})
-            self.assertEqual((b.root / winefixes.PE_DIR / "dcomp.dll").read_bytes(), b"stock dcomp.dll")
-    def test_offline_install_fails_softly_and_keeps_what_is_in_place(self):
-        with tempfile.TemporaryDirectory() as d:
-            tmp = Path(d); b = _fake_build(tmp); tgz = _tarball(tmp)
-            with mock.patch.dict("os.environ", {"VSTENV_WINE_FIXES": ""}), mock.patch.object(winefixes, "text", side_effect=OSError("offline")):
-                self.assertEqual(winefixes.install(b), {})
-            with mock.patch.dict("os.environ", {"VSTENV_WINE_FIXES": str(tgz)}): winefixes.install(b)
-            with mock.patch.dict("os.environ", {"VSTENV_WINE_FIXES": ""}), mock.patch.object(winefixes, "text", side_effect=OSError("offline")):
-                self.assertEqual(sorted(winefixes.install(b)), sorted(winefixes.FIXES), "offline: the installed set stays")
-    def test_a_newer_release_replaces_the_installed_set(self):
-        with tempfile.TemporaryDirectory() as d:
-            tmp = Path(d); b = _fake_build(tmp)
-            def release(tag, payload):
-                rel = {"tag_name": tag, "assets": [{"name": "wine-fixes-11.17.tar.gz", "browser_download_url": "http://x/" + tag}]}
-                tgz = _tarball(tmp / tag, payload=payload) if (tmp / tag).mkdir() is None else None
-                return mock.patch.object(winefixes, "text", return_value=json.dumps(rel)), mock.patch.object(winefixes, "fetch", return_value=tgz)
-            with mock.patch.dict("os.environ", {"VSTENV_WINE_FIXES": ""}):
-                p1, p2 = release("v0.2.0", b"first")
-                with p1, p2: winefixes.install(b)
-                self.assertEqual((b.root / winefixes.PE_DIR / "dcomp.dll").read_bytes(), b"first"); self.assertEqual(winefixes.marker(b)["release"], "v0.2.0")
-                with p1, p2 as fetch_mock: winefixes.install(b)
-                fetch_mock.assert_not_called()                      # same release: nothing fetched, nothing touched
-                p3, p4 = release("v0.2.1", b"second")
-                with p3, p4: winefixes.install(b)
-                self.assertEqual((b.root / winefixes.PE_DIR / "dcomp.dll").read_bytes(), b"second"); self.assertEqual(winefixes.marker(b)["release"], "v0.2.1")
-                self.assertEqual((b.root / winefixes.PE_DIR / "dcomp.dll.orig").read_bytes(), b"stock dcomp.dll", "the stock file stays the original")
     def test_remove_deletes_additions_that_have_no_original(self):
         with tempfile.TemporaryDirectory() as d:
             tmp = Path(d); b = _fake_build(tmp); tgz = _tarball(tmp)
