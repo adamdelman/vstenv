@@ -20,21 +20,50 @@
      /* if wineserver has cap_sys_nice we are unlimited, but leave -20 to the user */
      if (!setpriority( PRIO_PROCESS, getpid(), -20 )) nice_limit = -19;
      setpriority( PRIO_PROCESS, getpid(), 0 );
-@@ -207,6 +215,17 @@
+@@ -207,6 +215,28 @@
  {
      int min = -nice_limit, max = nice_limit, range = max - min, niceness;
      int effective_priority = get_effective_thread_priority( thread );
 +    struct sched_param param = { 0 };
++    int policy;
 +
 +    /* time-critical and realtime-class threads (audio callbacks) run SCHED_FIFO 70-80,
 +     * below PipeWire's and JACK's own audio threads, when RLIMIT_RTPRIO allows it */
-+    if (rt_limit && (thread->base_priority == THREAD_PRIORITY_TIME_CRITICAL || effective_priority >= LOW_REALTIME_PRIORITY))
++    if (rt_limit && thread->unix_tid != -1)
 +    {
-+        param.sched_priority = min( rt_limit, 70 + (effective_priority - 15) * 10 / 16 );
-+        if (!sched_setscheduler( thread->unix_tid, SCHED_FIFO | SCHED_RESET_ON_FORK, &param )) return;
++        policy = sched_getscheduler( thread->unix_tid ) & ~SCHED_RESET_ON_FORK;
++        /* a thread made realtime by someone else (pipewire-jack's data loop) is left alone */
++        if (!thread->rt_priority && (policy == SCHED_FIFO || policy == SCHED_RR)) return;
++        if (thread->base_priority == THREAD_PRIORITY_TIME_CRITICAL || effective_priority >= LOW_REALTIME_PRIORITY)
++        {
++            param.sched_priority = min( rt_limit, 70 + (effective_priority - 15) * 10 / 16 );
++            if (!sched_setscheduler( thread->unix_tid, SCHED_FIFO | SCHED_RESET_ON_FORK, &param ))
++            {
++                thread->rt_priority = param.sched_priority;
++                return;
++            }
++        }
++        if (thread->rt_priority) sched_setscheduler( thread->unix_tid, SCHED_OTHER | SCHED_RESET_ON_FORK, &param );
++        thread->rt_priority = 0;
 +    }
-+    else if (rt_limit && (sched_getscheduler( thread->unix_tid ) & ~SCHED_RESET_ON_FORK) == SCHED_FIFO)
-+        sched_setscheduler( thread->unix_tid, SCHED_OTHER | SCHED_RESET_ON_FORK, &param );
  
      if (nice_limit >= 0) return;
  
+@@ -369,6 +399,7 @@
+     thread->priority        = 0;
+     thread->base_priority   = 0;
+     thread->disable_boost   = 0;
++    thread->rt_priority     = 0;
+     thread->suspend         = 0;
+     thread->dbg_hidden      = 0;
+     thread->bypass_proc_suspend = 0;
+--- a/server/thread.h
++++ b/server/thread.h
+@@ -87,6 +87,7 @@
+     int                    priority;      /* current thread priority */
+     int                    base_priority; /* base priority level (relative to process base priority class) */
+     int                    disable_boost; /* disable thread priority boost */
++    int                    rt_priority;   /* SCHED_FIFO priority the server gave the thread, 0 for none */
+     int                    suspend;       /* suspend count */
+     bool                   is_system;     /* system thread (kernel mode only) */
+     bool                   dbg_hidden;    /* hidden from debugger */

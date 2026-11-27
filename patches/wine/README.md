@@ -788,7 +788,11 @@ and 16. The patch puts a time-critical thread, and every thread of a
 class) to 80 (time-critical in the realtime class), below PipeWire's data loop
 (83 here, 88 by default) and JACK's, and capped by `RLIMIT_RTPRIO`. It uses
 `SCHED_RESET_ON_FORK`, so a child process never inherits it, and puts a thread
-back on `SCHED_OTHER` when its priority drops. With `RLIMIT_RTPRIO` 0 (no
+back on `SCHED_OTHER` when its priority drops. A thread that is already realtime
+and that the server did not make so is left alone: WineASIO's callback runs in
+pipewire-jack's data loop, a Wine thread PipeWire itself puts on FIFO 83, and a
+host calling `SetThreadPriority` on it must neither lower it to 70 nor drop it to
+`SCHED_OTHER`. With `RLIMIT_RTPRIO` 0 (no
 `@audio`/`@realtime` limits), or when the kernel refuses, nothing changes: the
 nice mapping applies as before. Wine-Staging carried an opt-in version of this
 (`server-Realtime_Priority`, set by `STAGING_RT_PRIORITY_BASE`) until February
@@ -797,5 +801,6 @@ second configure (which keeps inotify, as the pinned build has it).
 
 Checked with a test program (`SetThreadPriority` time-critical, then normal):
 stock, the thread runs `TS` nice -11; patched, `FF` 70, then `TS` nice 0 again;
-in the realtime class `FF` 75 to 80; under `prlimit --rtprio=0` (both for the
+in the realtime class `FF` 75 to 80; a thread put on `FF` 83 from outside stays
+`FF` 83 through time-critical and back to normal; under `prlimit --rtprio=0` (both for the
 server and for the client only) `TS` nice -11, no message.
