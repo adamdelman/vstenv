@@ -110,7 +110,8 @@ class DebugRunTest(unittest.TestCase):
         samples = [b.splitlines() for b in out.read_text().split("### ")[1:]]
         self.assertGreaterEqual(len(samples), 2)
         self.assertIn(f"pid {prog.pid}", samples[0][0])
-        delta, total, tid, name = samples[1][1].split()[:4]
+        delta, total, tid, name, sched = samples[1][1].split()[:5]
+        self.assertEqual(sched, f"OTHER:{os.getpriority(os.PRIO_PROCESS, 0)}")
         self.assertEqual((tid, name), (str(prog.pid), comm))       # the busy thread is on top
         self.assertGreater(int(delta), 100); self.assertGreaterEqual(int(total), int(delta))
 
