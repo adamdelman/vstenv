@@ -1,5 +1,18 @@
 # VST Environment for Linux
 
+> **Cubase test build (v0.1.169-cubase.2).** This branch is a test build of the
+> Cubase 14–16 fixes, not an official vstenv release. To try it, download
+> `vstenv.flatpak` from the
+> [v0.1.169-cubase.2 release](https://github.com/adamdelman/vstenv/releases/tag/v0.1.169-cubase.2)
+> and install it:
+>
+> ```sh
+> flatpak install --user vstenv.flatpak
+> ```
+>
+> It replaces an installed vstenv with the same app id. To go back, install the official build again.
+> See [How this build is made](#how-this-build-is-made).
+
 **Use your Windows plugins and instruments in Linux music software.**
 
 VST Environment (vstenv) installs Windows plugins and makes them show up in your
@@ -424,6 +437,41 @@ project's own signed repository instead.
 - [Development](docs/development.md): building, tests, releases, reviewing
   recipes.
 - [The Wine patches](patches/wine/README.md).
+
+## How this build is made
+
+Both builds ran on public GitHub Actions on the fork, from the commits on this branch:
+
+- Run A, [v0.1.169-cubase.1](https://github.com/adamdelman/vstenv/actions/runs/46065183376),
+  built the patched Wine DLLs (`wine-fixes-11.17.tar.gz`) from the Wine sources plus `patches/wine/`.
+- Run B, [v0.1.169-cubase.2](https://github.com/adamdelman/vstenv/actions/runs/46066142859),
+  built the Flatpak you install. That Flatpak downloads run A's DLLs by their sha256, given below.
+
+Downloads the app makes, checked by sha256. A file that doesn't match is refused:
+
+| What | URL | sha256 |
+|---|---|---|
+| Wine 11.17 (`vstenv/wine.py`) | https://github.com/Kron4ek/Wine-Builds/releases/download/11.17/wine-11.17-staging-amd64-wow64.tar.xz | `278d80f3073f1a81386baafb41b83638d89eedaffb640f31599855145ed4fd7b` |
+| Wine fixes (`vstenv/winefixes.py`) | https://github.com/adamdelman/vstenv/releases/download/v0.1.169-cubase.1/wine-fixes-11.17.tar.gz | `889dd492cad38d2af8be8d595f6cb494b0f43e3d469a348f5012be7086eed308` |
+
+Each DLL in the Wine-fixes archive is also checked against the archive's `manifest.json`.
+yabridge is not pinned. The app takes it from the latest
+[dguedry/vstenv](https://github.com/dguedry/vstenv/releases) release, which is built against the same Wine.
+
+What the Flatpak can reach outside its sandbox, and why (from `flatpak/io.github.dguedry.vstenv.yml`):
+
+- `--talk-name=org.freedesktop.Flatpak`: runs Wine on the host (`flatpak-spawn --host`).
+  Your DAW's plugins and this app then share one wineserver. Without that, plugins hang and vendor apps crash.
+- `--filesystem=host`: the shared wineserver opens files for every Windows program,
+  so the app must see what they see: Documents, Music, and sample libraries wherever you keep them.
+- `--filesystem=/tmp`: the wineserver's socket is in `/tmp/.wine-<uid>`. The sandbox and the host must use the same one.
+- `~/.vst`, `~/.vst3`, `~/.clap`, `~/.local/share/yabridge`, `~/.local/bin`, `~/.config/yabridgectl`:
+  where your DAW looks for bridged plugins and yabridge.
+- `--share=network`: vendor stores and downloads, and GitHub for Wine and yabridge.
+- `--socket=x11`, `--device=dri`: Wine draws through X11 (XWayland on Wayland).
+- `--socket=pulseaudio`: sound from standalone Windows programs.
+- `--allow=devel`: Wine needs ptrace for exception handling.
+- `--allow=multiarch`: runs 32-bit Windows installers.
 
 ## License
 
