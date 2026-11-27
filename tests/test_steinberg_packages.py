@@ -52,6 +52,48 @@ class PackageTest(unittest.TestCase):
             self.assertEqual(res["name"], "MediaBay"); self.assertEqual(res["installed"], ["MediaBay.msi", "LibraryManager.msi"]); self.assertEqual(res["failed"], [])
             self.assertTrue(all(a[0] == "msiexec" and "/qn" in a for a in calls)); self.assertEqual(len(calls), 2)
             self.assertFalse(any("preinstall" in " ".join(a) for a in calls))
+    def test_cli_install_takes_a_product_zip_to_the_package_path(self):
+        # The zip also holds Setup.exe, MSIs and vc_redist: the plugin-file copier
+        # used to take it and stop at "holds several installers".
+        import argparse
+        from vstenv import cli
+        with tempfile.TemporaryDirectory() as tmp:
+            z = Path(tmp) / "Cubase_15.0.10_Installer_win64.zip"
+            with zipfile.ZipFile(z, "w") as zf:
+                zf.writestr("Cubase 15/Setup.exe", "MZ")
+                zf.writestr("Cubase 15/Additional Content/Installer Data/setup.xml", "<Setup><product file='Cubase15.msi'/></Setup>")
+                zf.writestr("Cubase 15/Additional Content/Installer/Cubase15.msi", "msi")
+                zf.writestr("Cubase 15/Additional Content/Installer/vc_redist.x64.exe", "MZ")
+            a = argparse.Namespace(installer=str(z), generic=False, no_sync=True, keep_trace=False, remedy=None)
+            with mock.patch.object(cli, "_prefix"), mock.patch.object(pkg, "install", return_value={"name": "Cubase 15", "method": "msi"}) as inst, \
+                 mock.patch("vstenv.plugfiles.install") as copier:
+                cli.cmd_install(a)
+            inst.assert_called_once(); copier.assert_not_called()
+    def test_cli_install_unpacks_a_manager_named_zip_first(self):
+        # A manager's installer shipped in a zip (IK Product Manager, Arturia Software
+        # Center) is classified "manager" by its name, but the copier unpacks it as before.
+        import argparse
+        from vstenv import cli, vendors
+        with tempfile.TemporaryDirectory() as tmp:
+            z = Path(tmp) / "IK_Product_Manager_Win.zip"
+            with zipfile.ZipFile(z, "w") as zf: zf.writestr("IK Product Manager Setup.exe", "MZ")
+            a = argparse.Namespace(installer=str(z), generic=False, no_sync=True, keep_trace=False, remedy=None)
+            v = mock.Mock(manager_name="Product Manager")
+            with mock.patch.object(cli, "_prefix"), mock.patch.object(vendors, "classify_installer", return_value=("manager", v)), \
+                 mock.patch.object(cli, "_install_plugin_files", return_value=None) as copier, mock.patch.object(pkg, "install") as inst:
+                cli.cmd_install(a)
+            copier.assert_called_once(); inst.assert_not_called(); v.install_manager.assert_not_called()
+    def test_only_a_steinberg_setup_xml_makes_a_package(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            def zipped(name, xml):
+                z = Path(tmp) / name
+                with zipfile.ZipFile(z, "w") as zf: zf.writestr("Thing 1/setup.xml", xml); zf.writestr("Thing 1/Setup.exe", "MZ")
+                return z
+            self.assertFalse(pkg.is_package(zipped("a.zip", "<configuration><setting name='x'/></configuration>")))
+            self.assertFalse(pkg.is_package(zipped("b.zip", "<Setup><product><title>x</title></product></Setup>")))
+            self.assertFalse(pkg.is_package(zipped("c.zip", "not xml")))
+            self.assertTrue(pkg.is_package(zipped("d.zip", "<Setup><msiPackage file='Runtime.msi'/></Setup>")))
+            self.assertTrue(pkg.is_package(zipped("e.zip", SETUP_XML)))
     def test_install_finds_the_msi_beside_a_nested_setup_xml(self):
         # Cubase 16: setup.xml in "Additional Content/Installer Data", the MSI in "Additional Content/Installer"
         with tempfile.TemporaryDirectory() as tmp:

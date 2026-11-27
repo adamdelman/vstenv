@@ -168,14 +168,18 @@ def _install_plugin_files(p, src, r) -> Path | None:
 
 def cmd_install(a):
     p = _prefix(); r = ConsoleReporter(); src = Path(a.installer)
-    if not a.generic:
+    kind, v = ("program", None) if a.generic else vendors.classify_installer(src)
+    if kind != "product" and not a.generic:
+        # A vendor's product package (a Steinberg product zip) is an archive too:
+        # it goes to its vendor's flow below, not to the plugin-file copier. A
+        # manager's installer in an archive is still unpacked by the copier first.
         from . import plugfiles
         if plugfiles.handles(src):
             src = _install_plugin_files(p, src, r)
             if src is None:
                 if not a.no_sync: setup.after_change(p, r)
                 return
-    kind, v = ("program", None) if a.generic else vendors.classify_installer(src)
+            kind, v = vendors.classify_installer(src)
     if kind == "manager":
         print(f"  recognized: the {v.manager_name} installer")
         v.install_manager(p, src, r)
