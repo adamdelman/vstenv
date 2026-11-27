@@ -32,6 +32,7 @@ vstenv menu remove                           # take away the menu and file manag
 vstenv webview2 software-gl on               # software rendering for WebView2 apps
 vstenv recipe set plugin NAME hide_wine=on   # a Troubleshoot setting, from a terminal
 vstenv ntsync [enable]                       # Wine's fast thread synchronization: show it, or turn it on (password prompt)
+vstenv realtime [enable]                     # real-time priority for audio: show it, or give your user the right (password prompt, then log out and in)
 vstenv wineasio enable                       # the WineASIO driver, for ASIO-only programs that need less delay (Cubase)
 vstenv wineasio set fixed-buffer 0 && vstenv wineasio set buffer 256   # let the program pick the buffer, and offer 256
 vstenv recipe set plugin NAME force_dnd=on   # REAPER: files dropped onto the plugin reach it

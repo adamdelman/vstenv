@@ -86,8 +86,8 @@ def run(p: wine.Prefix | None = None, on_check=None) -> list[Check]:
 
     try:
         from . import realtime
-        ok, why = realtime.summary(realtime.status())
-        c.append(Check("real-time priority for audio (low-latency ASIO)", ok, why, fix="" if ok else realtime.FIX))
+        rs = realtime.status(); ok, why = realtime.summary(rs)
+        c.append(Check("real-time priority for audio (low-latency ASIO)", ok, why, fix="" if ok else realtime.fix(rs)))
     except Exception as e:
         c.append(Check("real-time priority for audio (low-latency ASIO)", True, f"not checked: {str(e)[:70]}"))
 

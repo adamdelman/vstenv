@@ -1089,6 +1089,8 @@ class Window(Adw.ApplicationWindow):
         g = Adw.PreferencesGroup(title="Speed")
         g.add(_row("Speed up plugins", "Turns on the kernel's ntsync driver, so plugins with many threads (Kontakt) waste less CPU. Asks for your password once.",
                    "power-profile-performance-symbolic", lambda: self.enable_ntsync()))
+        g.add(_row("Real-time audio", "Lets audio run at real-time priority, so small ASIO buffers don't click. Asks for your password once; then log out and back in.",
+                   "audio-card-symbolic", lambda: self.enable_realtime()))
         page.add(g)
         g = Adw.PreferencesGroup(title="Audio", description="Programs already get sound through Wine's normal audio. WineASIO is an extra for programs "
                                  "that only use ASIO (Cubase) when you need less delay or more channels.")
@@ -1137,6 +1139,32 @@ class Window(Adw.ApplicationWindow):
             ok, msg = ntsync.enable()
             (r.ok if ok else r.fail)(msg); return ok, msg
         self.run_bg("Speeding up plugins", fn, lambda res, err: None if err or not res else self.toast(res[1], 8))
+    def enable_realtime(self):
+        from . import realtime
+        def fn(r):
+            r.step("Giving your user real-time priority for audio")
+            ok, msg = realtime.enable()
+            (r.ok if ok else r.fail)(msg); return ok, msg
+        self.run_bg("Setting up real-time audio", fn, lambda res, err: None if err or not res else self.toast(res[1], 8))
+    def offer_realtime(self):
+        """Like offer_ntsync: once per launch, ask when the user has no real-time
+        rights. A "no" is remembered."""
+        if getattr(self, "_realtime_checked", False): return
+        self._realtime_checked = True
+        from . import realtime
+        def work():
+            if not realtime.should_offer(): return
+            def ask():
+                d = Adw.AlertDialog(heading="Let audio run in real time?",
+                                    body="Your user cannot give audio real-time priority, so at small ASIO buffer sizes the sound "
+                                         "can click or drop out when the computer is busy.\n\nTurning it on asks for your password "
+                                         "once. Log out and back in afterwards so it applies.")
+                d.add_response("never", "Don't ask again"); d.add_response("later", "Not now"); d.add_response("enable", "Turn it on")
+                d.set_response_appearance("enable", Adw.ResponseAppearance.SUGGESTED); d.set_default_response("enable"); d.set_close_response("later")
+                d.connect("response", lambda _d, resp: self.enable_realtime() if resp == "enable" else (realtime.decline() if resp == "never" else None))
+                d.present(self)
+            ui(ask)
+        threading.Thread(target=work, daemon=True).start()
     def offer_ntsync(self):
         """Once per launch, in the background: offer the driver when the kernel has
         it and nobody loaded it. A "no" is remembered."""
@@ -1206,7 +1234,7 @@ class Window(Adw.ApplicationWindow):
                      "programs": "refresh_programs", "health": "refresh_health"}
 
     def refresh_all(self):
-        if self.is_ready() and not self.busy: self.offer_ntsync()
+        if self.is_ready() and not self.busy: self.offer_ntsync(); self.offer_realtime()
         self.refresh_notices()                     # cheap, and drives the header
         current = self.stack.get_visible_child_name()
         self._stale = set(self._PAGE_REFRESH) - {current}
