@@ -52,6 +52,23 @@ class PackageTest(unittest.TestCase):
             self.assertEqual(res["name"], "MediaBay"); self.assertEqual(res["installed"], ["MediaBay.msi", "LibraryManager.msi"]); self.assertEqual(res["failed"], [])
             self.assertTrue(all(a[0] == "msiexec" and "/qn" in a for a in calls)); self.assertEqual(len(calls), 2)
             self.assertFalse(any("preinstall" in " ".join(a) for a in calls))
+    def test_cli_install_takes_a_product_zip_to_the_package_path(self):
+        # The zip also holds Setup.exe, MSIs and vc_redist: the plugin-file copier
+        # used to take it and stop at "holds several installers".
+        import argparse
+        from vstenv import cli
+        with tempfile.TemporaryDirectory() as tmp:
+            z = Path(tmp) / "Cubase_15.0.10_Installer_win64.zip"
+            with zipfile.ZipFile(z, "w") as zf:
+                zf.writestr("Cubase 15/Setup.exe", "MZ")
+                zf.writestr("Cubase 15/Additional Content/Installer Data/setup.xml", "<Setup/>")
+                zf.writestr("Cubase 15/Additional Content/Installer/Cubase15.msi", "msi")
+                zf.writestr("Cubase 15/Additional Content/Installer/vc_redist.x64.exe", "MZ")
+            a = argparse.Namespace(installer=str(z), generic=False, no_sync=True, keep_trace=False, remedy=None)
+            with mock.patch.object(cli, "_prefix"), mock.patch.object(pkg, "install", return_value={"name": "Cubase 15", "method": "msi"}) as inst, \
+                 mock.patch("vstenv.plugfiles.install") as copier:
+                cli.cmd_install(a)
+            inst.assert_called_once(); copier.assert_not_called()
     def test_install_finds_the_msi_beside_a_nested_setup_xml(self):
         # Cubase 16: setup.xml in "Additional Content/Installer Data", the MSI in "Additional Content/Installer"
         with tempfile.TemporaryDirectory() as tmp:
