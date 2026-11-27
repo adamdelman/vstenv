@@ -84,6 +84,13 @@ def run(p: wine.Prefix | None = None, on_check=None) -> list[Check]:
     except Exception as e:
         c.append(Check("fast thread synchronization (ntsync)", True, f"not checked: {str(e)[:70]}"))
 
+    try:
+        from . import realtime
+        ok, why = realtime.summary(realtime.status())
+        c.append(Check("real-time priority for audio (low-latency ASIO)", ok, why, fix="" if ok else realtime.FIX))
+    except Exception as e:
+        c.append(Check("real-time priority for audio (low-latency ASIO)", True, f"not checked: {str(e)[:70]}"))
+
     # A program that runs but never shows a window is usually not the program:
     # mutter can get a window stuck in unmanaging and then refuses to map any
     # Wine window for the rest of the session. Reported as an installer with a
