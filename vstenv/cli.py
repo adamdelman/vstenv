@@ -413,8 +413,10 @@ def cmd_wine_fixes(a):
     from . import wineasio
     if a.action == "remove":
         winefixes.remove(b, r); wineasio.unregister(wine.Prefix(paths.PREFIX, b), r)
-    elif wineasio.DLL in winefixes.install(b, r, force=a.force):
-        wineasio.refresh(wine.Prefix(paths.PREFIX, b), r)    # new files: an existing registration gets them
+    else:
+        got = winefixes.install(b, r, force=a.force); p = wine.Prefix(paths.PREFIX, b)
+        if wineasio.DLL in got: wineasio.refresh(p, r)    # new files: an existing registration gets them
+        if p.exists: winefixes.register_classes(p, r)
     _fail_if(r)
 
 def cmd_dxvk(a):

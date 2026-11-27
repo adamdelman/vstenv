@@ -1,0 +1,256 @@
+--- a/include/windows.perception.spatial.idl
++++ b/include/windows.perception.spatial.idl
+@@ -47,6 +47,8 @@
+     interface ISpatialAnchorExportSufficiency;
+     interface ISpatialAnchorExporter;
+     interface ISpatialAnchorExporterStatics;
++    interface ISpatialLocator;
++    interface ISpatialLocatorStatics;
+ 
+     runtimeclass SpatialBoundingVolume;
+     runtimeclass SpatialCoordinateSystem;
+@@ -54,6 +56,7 @@
+     runtimeclass SpatialAnchor;
+     runtimeclass SpatialAnchorExportSufficiency;
+     runtimeclass SpatialAnchorExporter;
++    runtimeclass SpatialLocator;
+ 
+     declare {
+         interface Windows.Foundation.Collections.IIterable<Windows.Perception.Spatial.SpatialBoundingVolume *>;
+@@ -274,6 +277,27 @@
+         HRESULT RequestAccessAsync([out] [retval] Windows.Foundation.IAsyncOperation<Windows.Perception.Spatial.SpatialPerceptionAccessStatus> **result);
+     }
+ 
++    /* Only what GetDefault needs: Wine has no spatial tracking and never creates a
++     * SpatialLocator, so its methods (and the types they use) are not declared yet. */
++    [
++        contract(Windows.Foundation.UniversalApiContract, 1.0),
++        exclusiveto(Windows.Perception.Spatial.SpatialLocator),
++        uuid(f6478925-9e0c-3bb6-997e-b64ecca24cf4)
++    ]
++    interface ISpatialLocator : IInspectable
++    {
++    }
++
++    [
++        contract(Windows.Foundation.UniversalApiContract, 1.0),
++        exclusiveto(Windows.Perception.Spatial.SpatialLocator),
++        uuid(b76e3340-a7c2-361b-bb82-56e93b89b1bb)
++    ]
++    interface ISpatialLocatorStatics : IInspectable
++    {
++        HRESULT GetDefault([out, retval] Windows.Perception.Spatial.SpatialLocator **value);
++    }
++
+     [
+         contract(Windows.Foundation.UniversalApiContract, 2.0),
+         marshaling_behavior(agile),
+@@ -336,4 +360,15 @@
+     {
+         [default] interface Windows.Perception.Spatial.ISpatialAnchorExporter;
+     }
++
++    [
++        contract(Windows.Foundation.UniversalApiContract, 1.0),
++        marshaling_behavior(agile),
++        static(Windows.Perception.Spatial.ISpatialLocatorStatics, Windows.Foundation.UniversalApiContract, 1.0),
++        threading(both)
++    ]
++    runtimeclass SpatialLocator
++    {
++        [default] interface Windows.Perception.Spatial.ISpatialLocator;
++    }
+ }
+--- a/dlls/windows.perception.stub/Makefile.in
++++ b/dlls/windows.perception.stub/Makefile.in
+@@ -7,5 +7,6 @@
+ 	async_private.idl \
+ 	classes.idl \
+ 	holographic_space.c \
++	locator.c \
+ 	main.c \
+ 	observer.c
+--- a/dlls/windows.perception.stub/classes.idl
++++ b/dlls/windows.perception.stub/classes.idl
+@@ -27,6 +27,7 @@
+ 
+ namespace Windows.Perception.Spatial {
+     runtimeclass SpatialAnchorExporter;
++    runtimeclass SpatialLocator;
+ }
+ namespace Windows.Perception.Spatial.Surfaces {
+     runtimeclass SpatialSurfaceObserver;
+--- /dev/null
++++ b/dlls/windows.perception.stub/locator.c
+@@ -0,0 +1,149 @@
++/*
++ * Copyright 2026 vstenv contributors
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with this library; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
++ */
++
++#include "private.h"
++#include "wine/debug.h"
++
++WINE_DEFAULT_DEBUG_CHANNEL(perception);
++
++struct locator_statics
++{
++    IActivationFactory IActivationFactory_iface;
++    ISpatialLocatorStatics ISpatialLocatorStatics_iface;
++    LONG ref;
++};
++
++static inline struct locator_statics *impl_from_IActivationFactory( IActivationFactory *iface )
++{
++    return CONTAINING_RECORD( iface, struct locator_statics, IActivationFactory_iface );
++}
++
++static HRESULT WINAPI factory_QueryInterface( IActivationFactory *iface, REFIID iid, void **out )
++{
++    struct locator_statics *impl = impl_from_IActivationFactory( iface );
++
++    TRACE( "iface %p, iid %s, out %p.\n", iface, debugstr_guid( iid ), out );
++
++    if (IsEqualGUID( iid, &IID_IUnknown ) ||
++        IsEqualGUID( iid, &IID_IInspectable ) ||
++        IsEqualGUID( iid, &IID_IAgileObject ) ||
++        IsEqualGUID( iid, &IID_IActivationFactory ))
++    {
++        *out = &impl->IActivationFactory_iface;
++        IInspectable_AddRef( *out );
++        return S_OK;
++    }
++
++    if (IsEqualGUID( iid, &IID_ISpatialLocatorStatics ))
++    {
++        *out = &impl->ISpatialLocatorStatics_iface;
++        IInspectable_AddRef( *out );
++        return S_OK;
++    }
++
++    FIXME( "%s not implemented, returning E_NOINTERFACE.\n", debugstr_guid( iid ) );
++    *out = NULL;
++    return E_NOINTERFACE;
++}
++
++static ULONG WINAPI factory_AddRef( IActivationFactory *iface )
++{
++    struct locator_statics *impl = impl_from_IActivationFactory( iface );
++    ULONG ref = InterlockedIncrement( &impl->ref );
++    TRACE( "iface %p increasing refcount to %lu.\n", iface, ref );
++    return ref;
++}
++
++static ULONG WINAPI factory_Release( IActivationFactory *iface )
++{
++    struct locator_statics *impl = impl_from_IActivationFactory( iface );
++    ULONG ref = InterlockedDecrement( &impl->ref );
++    TRACE( "iface %p decreasing refcount to %lu.\n", iface, ref );
++    return ref;
++}
++
++static HRESULT WINAPI factory_GetIids( IActivationFactory *iface, ULONG *iid_count, IID **iids )
++{
++    FIXME( "iface %p, iid_count %p, iids %p stub!\n", iface, iid_count, iids );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI factory_GetRuntimeClassName( IActivationFactory *iface, HSTRING *class_name )
++{
++    FIXME( "iface %p, class_name %p stub!\n", iface, class_name );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI factory_GetTrustLevel( IActivationFactory *iface, TrustLevel *trust_level )
++{
++    FIXME( "iface %p, trust_level %p stub!\n", iface, trust_level );
++    return E_NOTIMPL;
++}
++
++static HRESULT WINAPI factory_ActivateInstance( IActivationFactory *iface, IInspectable **instance )
++{
++    FIXME( "iface %p, instance %p stub!\n", iface, instance );
++    return E_NOTIMPL;
++}
++
++static const struct IActivationFactoryVtbl factory_vtbl =
++{
++    factory_QueryInterface,
++    factory_AddRef,
++    factory_Release,
++    /* IInspectable methods */
++    factory_GetIids,
++    factory_GetRuntimeClassName,
++    factory_GetTrustLevel,
++    /* IActivationFactory methods */
++    factory_ActivateInstance,
++};
++
++DEFINE_IINSPECTABLE( locator_statics, ISpatialLocatorStatics, struct locator_statics, IActivationFactory_iface )
++
++/* No spatial tracking device (mixed-reality headset, HoloLens): Windows answers with no locator. */
++static HRESULT WINAPI locator_statics_GetDefault( ISpatialLocatorStatics *iface, ISpatialLocator **value )
++{
++    TRACE( "iface %p, value %p.\n", iface, value );
++
++    if (!value) return E_POINTER;
++    *value = NULL;
++    return S_OK;
++}
++
++static const struct ISpatialLocatorStaticsVtbl locator_statics_vtbl =
++{
++    locator_statics_QueryInterface,
++    locator_statics_AddRef,
++    locator_statics_Release,
++    /* IInspectable methods */
++    locator_statics_GetIids,
++    locator_statics_GetRuntimeClassName,
++    locator_statics_GetTrustLevel,
++    /* ISpatialLocatorStatics methods */
++    locator_statics_GetDefault,
++};
++
++static struct locator_statics locator_statics =
++{
++    {&factory_vtbl},
++    {&locator_statics_vtbl},
++    1,
++};
++
++IActivationFactory *spatial_locator_factory = &locator_statics.IActivationFactory_iface;
+--- a/dlls/windows.perception.stub/main.c
++++ b/dlls/windows.perception.stub/main.c
+@@ -45,6 +45,9 @@
+     if (!wcscmp( buffer, RuntimeClass_Windows_Perception_Spatial_SpatialAnchorExporter ))
+         IActivationFactory_QueryInterface( anchor_exporter_factory, &IID_IActivationFactory, (void **)factory );
+ 
++    if (!wcscmp( buffer, RuntimeClass_Windows_Perception_Spatial_SpatialLocator ))
++        IActivationFactory_QueryInterface( spatial_locator_factory, &IID_IActivationFactory, (void **)factory );
++
+     if (*factory) return S_OK;
+     return CLASS_E_CLASSNOTAVAILABLE;
+ }
+--- a/dlls/windows.perception.stub/private.h
++++ b/dlls/windows.perception.stub/private.h
+@@ -45,6 +45,7 @@
+ extern IActivationFactory *observer_factory;
+ extern IActivationFactory *holographic_space_factory;
+ extern IActivationFactory *anchor_exporter_factory;
++extern IActivationFactory *spatial_locator_factory;
+ 
+ extern HRESULT async_operation_request_access_create( IUnknown *invoker, IUnknown *param, async_operation_callback callback,
+                                                       IAsyncOperation_SpatialPerceptionAccessStatus **out );

@@ -342,6 +342,46 @@ tells callers to check. Windows clears the last error on success; Wine's
 the app always saw itself offline and never made a request. The patch sets
 `ERROR_SUCCESS` before returning. Only the 64-bit `sensapi` is rebuilt.
 
+## windows.globalization-calendar-<version>.patch and windows.perception-spatial-locator-<version>.patch
+
+Cubase 14, 15 and 16 died at start ("terminated with an error while executing
+kernelbase.dll" in the Safe-Start dialog) unless `Components/headtracking.dll`
+was moved away. That module looks for a Windows Mixed Reality headset through
+C++/WinRT: its tracker's constructor creates a `Windows.Globalization.Calendar`,
+then it asks `SpatialLocator.GetDefault()` and, only when that returns a locator,
+uses `HolographicDisplay`, `PerceptionTimestampHelper` and the calendar's
+`SetToNow`/`GetDateTime`. Wine had neither class: `RoGetActivationFactory`
+returned `REGDB_E_CLASSNOTREG` for the Calendar, C++/WinRT threw it as an
+`hresult_error` (0xe06d7363) that nothing caught, and Cubase's crash handler
+ended the process (c0000409). Found with `vstenv run --debug` (`+seh`,
+`+loaddll`, combase's error line) and the module's disassembly.
+
+The first patch adds the `Calendar` runtime class to `windows.globalization`:
+activation gives a calendar set to the current time, and `Clone`,
+`GetDateTime`, `SetDateTime`, `SetToNow`, `Compare`, `CompareDateTime` and
+`CopyTo` work. Not implemented: the field accessors (year to nanosecond, their
+`Add*` and `*AsString` forms, first/last/number-of), `SetToMin`/`SetToMax`,
+the calendar system, clock, language and numeral-system properties,
+`ITimeZoneOnCalendar`, and `ICalendarFactory`/`ICalendarFactory2`
+(a calendar for given languages, calendar system or clock); those are FIXME
+stubs or missing interfaces. The second adds `SpatialLocator`'s statics to
+`windows.perception.stub`: `GetDefault` answers S_OK with no locator.
+Whether Windows answers the same without a headset is not checked; what is
+checked is that Cubase's head-tracking module gives up quietly on it. Only
+those two DLLs are rebuilt. A prefix finds a WinRT class through its registry entry, which Wine
+writes during a prefix update, so setup and `vstenv wine-fixes install` run
+`wineboot -u` once when a patched DLL's class is not registered
+(`winefixes.register_classes`). wineboot skips a DLL a running program has in
+use, so the classes are looked up again afterwards and a class still missing
+is reported as a failed step. Checked with Cubase 16.0.5: before, c0000409
+right after `headtracking.dll` loaded; after, with the DLL in place, the Hub
+opens.
+Cubase 14's own `headtracking.dll` (August 2023 build, same four classes) was
+checked the same way, loaded by Cubase 16: c0000409 with the stock DLLs, the Hub
+with the patched ones. A Cubase 14 that starts on stock Wine has the module
+renamed (`headtracking.dll.disabled`, the old workaround); renaming it back
+is safe once these fixes are installed. Cubase 15 is from a user's report.
+
 ## ntdll-hide-wine-version-<version>.patch
 
 JUCE 8.0.13 and later call `GetProcAddress(ntdll, "wine_get_version")` and take a
