@@ -89,11 +89,20 @@ def parse_setup(xml_path: Path) -> Setup:
     s.search = search  # type: ignore[attr-defined]
     return s
 
-def _find_msi(setup_dir: Path, name: str, search: list[str]) -> Path | None:
-    for d in [Path("."), *[Path(s) for s in search]]:
-        c = setup_dir / d / name
-        if c.is_file(): return c
-    for c in setup_dir.rglob(name): return c
+def _find_msi(setup_dir: Path, name: str, search: list[str], root: Path | None = None) -> Path | None:
+    """The MSI named in setup.xml: in the setup folder or an <include><path msi>
+    under it, then the same paths from each folder above it up to root, the
+    unpacked package (Cubase 16 keeps setup.xml in "Additional Content/Installer
+    Data" and names "Additional Content/Installer" from the package's top
+    folder); a search of the whole package is the last resort."""
+    bases = [setup_dir]
+    if root is not None and setup_dir.is_relative_to(root):
+        bases += [d for d in setup_dir.parents if d.is_relative_to(root)]
+    for base in bases:
+        for d in [Path("."), *[Path(s) for s in search]]:
+            c = base / d / name
+            if c.is_file(): return c
+    for c in (root or setup_dir).rglob(name): return c
     return None
 
 def _vtuple(v: str) -> tuple: return tuple(int(x) for x in re.findall(r"\d+", v or "")[:4])
@@ -137,7 +146,7 @@ def install(p: Prefix, pkg: Path, reporter=None) -> dict:
         if s.prerun: r.log(f"{s.title}: skipping prerun script(s) {', '.join(s.prerun)} (only stop running Steinberg processes)")
         done, failed = [], []
         for name in s.msis:
-            msi = _find_msi(d, name, getattr(s, "search", []))
+            msi = _find_msi(d, name, getattr(s, "search", []), root=work)
             r.step(f"Installing {name}")
             if msi is None: r.fail("not in the package"); failed.append(name); continue
             have = _already_newer(p, msi)

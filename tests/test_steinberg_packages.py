@@ -52,6 +52,32 @@ class PackageTest(unittest.TestCase):
             self.assertEqual(res["name"], "MediaBay"); self.assertEqual(res["installed"], ["MediaBay.msi", "LibraryManager.msi"]); self.assertEqual(res["failed"], [])
             self.assertTrue(all(a[0] == "msiexec" and "/qn" in a for a in calls)); self.assertEqual(len(calls), 2)
             self.assertFalse(any("preinstall" in " ".join(a) for a in calls))
+    def test_install_finds_the_msi_beside_a_nested_setup_xml(self):
+        # Cubase 16: setup.xml in "Additional Content/Installer Data", the MSI in "Additional Content/Installer"
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Prefix(Path(tmp) / "prefix", WineBuild(Path(tmp) / "wine")); p.drive_c.mkdir(parents=True)
+            z = Path(tmp) / "Cubase_16.0.5_Installer_win64.zip"
+            with zipfile.ZipFile(z, "w") as zf:
+                zf.writestr("Cubase 16/Additional Content/Installer Data/setup.xml",
+                            "<Setup><product file='Cubase16.msi'><title>Cubase 16</title></product>"
+                            "<include><path msi='Additional Content/Installer'/></include></Setup>")
+                zf.writestr("Cubase 16/Additional Content/Installer/Cubase16.msi", "msi")
+            calls = []
+            def run(argv, **kw): calls.append(argv); return subprocess.CompletedProcess(argv, 0)
+            with mock.patch.object(p, "run", side_effect=run), mock.patch.object(pkg.paths, "CACHE", Path(tmp)):
+                res = pkg.install(p, z)
+            self.assertEqual((res["installed"], res["failed"]), (["Cubase16.msi"], []))
+            self.assertTrue(calls[0][2].endswith("Cubase16.msi"))
+    def test_include_path_from_the_package_top_before_a_search(self):
+        # an older copy elsewhere in the package must not win over the path setup.xml names
+        with tempfile.TemporaryDirectory() as tmp:
+            top = Path(tmp) / "Cubase 16"; setup_dir = top / "Additional Content/Installer Data"; setup_dir.mkdir(parents=True)
+            want = top / "Additional Content/Installer/Cubase16.msi"; want.parent.mkdir(); want.write_text("msi")
+            (top / "Old").mkdir(); (top / "Old/Cubase16.msi").write_text("old")
+            with mock.patch.object(Path, "rglob", side_effect=AssertionError("searched")):
+                self.assertEqual(pkg._find_msi(setup_dir, "Cubase16.msi", ["Additional Content/Installer"], root=Path(tmp)), want)
+            self.assertIsNone(pkg._find_msi(setup_dir, "Gone.msi", [], root=Path(tmp)))
+            self.assertEqual(pkg._find_msi(setup_dir, "Cubase16.msi", [], root=Path(tmp)).name, "Cubase16.msi")   # the search, last
     def test_staged_finds_failed_status_files_with_their_package(self):
         with tempfile.TemporaryDirectory() as tmp:
             p = Prefix(Path(tmp) / "prefix", WineBuild(Path(tmp) / "wine")); (p.drive_c / "users/me").mkdir(parents=True)
