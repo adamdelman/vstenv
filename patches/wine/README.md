@@ -342,6 +342,19 @@ tells callers to check. Windows clears the last error on success; Wine's
 the app always saw itself offline and never made a request. The patch sets
 `ERROR_SUCCESS` before returning. Only the 64-bit `sensapi` is rebuilt.
 
+## msi-feature-cost-children-<version>.patch
+
+Cubase 16.0.5 did not install from the Download Assistant ("Installation
+failed"; the Install Helper logged exit code c0000354, the code a process gets
+when the crash debugger that attached to it goes away). Run by hand,
+`Setup.exe --silent` (a .NET SetupBootstrapper using WiX's DTF) crashed with a
+page fault in `msi.dll` under `MsiGetFeatureCost`, called with
+`MSICOSTTREE_CHILDREN` while it sizes the features. Wine walked the feature's
+`Children` list as `MSIFEATURE` entries, but the list holds `FeatureList`
+links to the child features, so it read a string as a pointer. The patch walks
+the links. Only `msi.dll` is rebuilt. Checked: before, the crash dialog; after,
+`Setup.exe --silent` prints "Finished Installation" and exits 0.
+
 ## windows.globalization-calendar-<version>.patch and windows.perception-spatial-locator-<version>.patch
 
 Cubase 14, 15 and 16 died at start ("terminated with an error while executing
