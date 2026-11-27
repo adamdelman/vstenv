@@ -23,17 +23,20 @@ from pathlib import Path
 from . import host, paths
 
 # Every topic: +seh logs each exception with code and address (the crash, and what
-# led to it); +loaddll one line per DLL, native or builtin; +module why a DLL or
-# import failed to load (the usual start-up crash); +timestamp,+pid order events and
+# led to it); +loaddll one line per DLL, native or builtin; warn+module why a DLL or
+# import failed to load (the usual start-up crash) -- the full +module trace is half
+# of a Cubase start's log (a line per PE section and thread), so only the loader
+# topic has it; +timestamp,+pid order events and
 # tell processes apart (Wine prefixes the thread id itself; there is no +tid);
 # err+all is Wine's own errors; fixme-all drops the unimplemented-function chatter.
 # Never +relay: gigabytes a minute. A 1-2 minute session stays in the tens of MB.
-CRASH = ["+timestamp", "+pid", "+seh", "+loaddll", "+module", "err+all", "fixme-all"]
+CRASH = ["+timestamp", "+pid", "+seh", "+loaddll", "warn+module", "err+all", "fixme-all"]
 TOPICS = {
     "crash": [],
     "graphics": ["+d2d", "+dcomp", "+dxgi", "+d3d11"],    # plus DXVK's log (debug_env)
     "windows": ["+x11drv", "+event", "+win"],             # Wine 11 has no focus channel
     "dragdrop": ["+ole", "+xdnd"],
+    "loader": ["+module"],                                # how each DLL was searched for and mapped
 }
 TOPIC_NAMES = [*TOPICS, "all"]
 

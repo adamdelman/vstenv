@@ -522,7 +522,7 @@ def main(argv=None):
     s.set_defaults(f=cmd_unmanaged)
     s = sp.add_parser("run", help="start an installed program (name or part of it)"); s.add_argument("name", nargs="?"); s.add_argument("--wait", action="store_true")
     s.add_argument("--debug", nargs="?", const="crash", metavar="TOPIC",
-                   help="run it once with debug logging (crash, graphics, windows, dragdrop or all; default crash) into a directory `report` includes; waits for it to exit"); s.set_defaults(f=cmd_run)
+                   help="run it once with debug logging (crash, graphics, windows, dragdrop, loader or all; default crash) into a directory `report` includes; waits for it to exit"); s.set_defaults(f=cmd_run)
     sp.add_parser("hang-dump", help="while a program hangs: write every thread's backtrace into the newest debug log directory").set_defaults(f=cmd_hang_dump)
     s = sp.add_parser("uninstall", help="uninstall a program (its own uninstaller) or a vendor product without one (an NI application or library)"); s.add_argument("name"); s.add_argument("--no-sync", action="store_true"); s.set_defaults(f=cmd_uninstall)
     s = sp.add_parser("remove-environment", help="delete the prefix and everything setup made (bridged plugins, menu and file manager entries, URL handlers), so the next start sets up fresh")

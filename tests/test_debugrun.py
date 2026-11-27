@@ -29,7 +29,8 @@ class DebugRunTest(unittest.TestCase):
 
     def test_topics(self):
         crash = debugrun.channels("crash").split(",")
-        for c in ("+seh", "+loaddll", "+module", "+timestamp", "+pid", "err+all"): self.assertIn(c, crash)
+        for c in ("+seh", "+loaddll", "warn+module", "+timestamp", "+pid", "err+all"): self.assertIn(c, crash)
+        self.assertNotIn("+module", crash); self.assertIn("+module", debugrun.channels("loader").split(","))
         self.assertIn("+dcomp", debugrun.channels("graphics")); self.assertIn("+xdnd", debugrun.channels("dragdrop"))
         self.assertIn("+x11drv", debugrun.channels("windows"))
         al = debugrun.channels("all").split(",")
