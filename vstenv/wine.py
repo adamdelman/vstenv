@@ -323,6 +323,25 @@ class Prefix:
         self.run(["winecfg", "/v", windows_version], timeout=120)
         self.wait_idle(force=True); r.ok(str(self.path))
 
+    NT_CURRENT_VERSION = r"HKLM\Software\Microsoft\Windows NT\CurrentVersion"
+
+    def fix_product_name(self, reporter=None):
+        """`winecfg /v win10` (and win11) writes ProductName "Microsoft Windows 10";
+        Windows 10 and 11 both say "Windows 10 <edition>", as Wine's own wine.inf
+        does ("Windows 10 Pro"). Steinberg's setup bootstrapper (Cubase 14)
+        counts Windows 10 only when ProductName starts with "Windows 10" and
+        otherwise refuses with code 241, "Your operating system is not supported".
+        Read from system.reg on the host, so a correct prefix costs no Wine call."""
+        r = null_reporter(reporter)
+        try: text = (self.path / "system.reg").read_text(encoding="utf-8", errors="replace")
+        except OSError: return
+        sec = re.search(r'^\[Software\\\\Microsoft\\\\Windows NT\\\\CurrentVersion\] .*?(?=^\[)', text, re.M | re.S)
+        m = re.search(r'^"ProductName"="Microsoft (Windows 1[01])"', sec.group(0), re.M) if sec else None
+        if not m: return
+        r.step("Windows product name")
+        self.reg_add(self.NT_CURRENT_VERSION, "ProductName", "Windows 10 Pro")   # Windows 11 also reports "Windows 10"
+        r.ok(f"was \"Microsoft {m.group(1)}\"")
+
     def wait_idle(self, timeout=120, force=False):
         """Wait for wineserver to exit so registry hives are flushed. Unless
         forced (fresh-prefix creation, where only transient services linger),
