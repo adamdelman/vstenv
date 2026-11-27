@@ -94,6 +94,28 @@ class PackageTest(unittest.TestCase):
             self.assertFalse(pkg.is_package(zipped("c.zip", "not xml")))
             self.assertTrue(pkg.is_package(zipped("d.zip", "<Setup><msiPackage file='Runtime.msi'/></Setup>")))
             self.assertTrue(pkg.is_package(zipped("e.zip", SETUP_XML)))
+    def test_run_finishes_staged_packages_when_the_download_assistant_closes(self):
+        # `vstenv run "Steinberg Download Assistant"` (a terminal or script launch)
+        # left MediaBay staged: only the GUI and `manager launch --wait` finished it.
+        import argparse
+        from vstenv import cli, programs
+        sda = programs.Program("Steinberg Download Assistant", publisher="Steinberg Media Technologies GmbH", exe="C:\\sda.exe")
+        cubase = programs.Program("Steinberg Cubase 15", publisher="Steinberg Media Technologies GmbH", exe="C:\\c.exe")
+        for prog, finished in ((sda, 1), (cubase, 0)):
+            proc = mock.Mock(spec=["wait", "poll"])
+            with mock.patch.object(cli, "_prefix"), mock.patch.object(programs, "find", return_value=prog), \
+                 mock.patch.object(programs, "run", return_value=proc), mock.patch.object(programs, "watch_plugins"), \
+                 mock.patch.object(cli.setup, "after_change"), mock.patch.object(pkg, "finish_staged", return_value=[]) as fin:
+                cli.cmd_run(argparse.Namespace(name=prog.name, debug=None, wait=False))
+            self.assertEqual(fin.call_count, finished, prog.name)
+        for wait in (False, True):     # a vendor's failure does not skip the plugin sync
+            proc = mock.Mock(spec=["wait", "poll"])
+            with mock.patch.object(cli, "_prefix"), mock.patch.object(programs, "find", return_value=sda), \
+                 mock.patch.object(programs, "run", return_value=proc), mock.patch.object(programs, "watch_plugins"), \
+                 mock.patch.object(cli.setup, "after_change") as sync, mock.patch.object(pkg, "finish_staged", side_effect=RuntimeError("boom")), \
+                 mock.patch("sys.stderr"):
+                cli.cmd_run(argparse.Namespace(name=sda.name, debug=None, wait=wait))
+            sync.assert_called()
     def test_install_finds_the_msi_beside_a_nested_setup_xml(self):
         # Cubase 16: setup.xml in "Additional Content/Installer Data", the MSI in "Additional Content/Installer"
         with tempfile.TemporaryDirectory() as tmp:

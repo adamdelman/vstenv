@@ -304,10 +304,15 @@ def cmd_recipe(a):
 def cmd_run(a):
     p = _prefix(); r = ConsoleReporter()
     prog = programs.find(p, a.name)
+    t0 = time.time()
     try: proc = programs.run(p, prog, r)
     except RuntimeError as e: sys.exit(str(e))
+    v = vendors.for_program(prog)
+    if v is None or not v.is_manager_program(prog): v = None
     if a.wait:
-        proc.wait(); setup.after_change(p, r)           # the program may have installed plugins
+        proc.wait()
+        _finish_installs(v, p, r, t0)                   # as `manager launch --wait` and the GUI do
+        setup.after_change(p, r)                        # the program may have installed plugins
     elif getattr(proc, "vstenv_watch", None) is not None:
         proc.vstenv_watch.join()     # the vendor is observing the program (e.g. rescuing
                                      # its installs); exiting now would kill that thread
@@ -318,7 +323,18 @@ def cmd_run(a):
         # Central), and they are bridged as they appear, then once more at exit.
         _join_window_watch(proc)
         programs.watch_plugins(p, proc, lambda: setup.after_change(p, r))
+        # A vendor manager started this way (the Download Assistant) leaves the
+        # installs it could not finish under Wine (MediaBay's untrusted prerun
+        # script) staged; finish them now it is closed.
+        _finish_installs(v, p, r, t0)
         setup.after_change(p, r)
+
+def _finish_installs(v, p, r, since):
+    """The vendor's staged installs, after its manager closed. A failure is
+    reported, not raised: the plugin sync after it must still run."""
+    if v is None: return
+    try: v.finish_installs(p, r, since=since)
+    except Exception as e: print(f"  could not finish {v.name}'s staged installs: {e}", file=sys.stderr)
 
 def _join_window_watch(proc, seconds=40.0):
     """Wait for the window watcher programs.run attached (it fixes a window the WM
