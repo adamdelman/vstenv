@@ -369,6 +369,11 @@ writes during a prefix update, so setup and `vstenv wine-fixes install` run
 (`winefixes.register_classes`). Checked with Cubase 16.0.5: before, c0000409
 right after `headtracking.dll` loaded; after, with the DLL in place, the Hub
 opens.
+Cubase 14's own `headtracking.dll` (August 2023 build, same four classes) was
+checked the same way, loaded by Cubase 16: c0000409 with the stock DLLs, the Hub
+with the patched ones. A Cubase 14 that starts on stock Wine has the module
+renamed (`headtracking.dll.disabled`, the old workaround); renaming it back
+is safe once these fixes are installed. Cubase 15 is from a user's report.
 
 ## ntdll-hide-wine-version-<version>.patch
 
