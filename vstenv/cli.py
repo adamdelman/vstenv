@@ -83,6 +83,16 @@ def cmd_ntsync(a):
     s = ntsync.status(); ok, why = ntsync.summary(s); print(why)
     if ntsync.can_enable(s): print(f"Turn it on: {APP_NAME} ntsync enable (asks for your password once)")
 
+def cmd_realtime(a):
+    """Real-time priority for the audio threads: a pam_limits file for this user."""
+    from . import realtime
+    if a.action == "enable":
+        ok, msg = realtime.enable(); print(msg)
+        if not ok: sys.exit(1)
+        return
+    s = realtime.status(); ok, why = realtime.summary(s); print(why)
+    if realtime.can_enable(s): print(f"Turn it on: {APP_NAME} realtime enable (asks for your password once), then log out and back in")
+
 def cmd_wineasio(a):
     """WineASIO: an ASIO driver over JACK/PipeWire, off until asked for."""
     from . import wineasio, winefixes
@@ -527,6 +537,7 @@ def main(argv=None):
     s = sp.add_parser("url-handlers", help="desktop handlers for the vendors' sign-in callback links"); s.add_argument("action", nargs="?", default="register", choices=["register", "unregister", "status"]); s.set_defaults(f=cmd_url_handlers)
     s = sp.add_parser("report", help="write a diagnostic bundle to send with a bug report"); s.add_argument("-o", "--output"); s.add_argument("--summary-only", action="store_true"); s.set_defaults(f=cmd_report)
     s = sp.add_parser("ntsync", help="Wine's fast thread synchronization (kernel ntsync driver): show it, or turn it on"); s.add_argument("action", nargs="?", default="status", choices=["status", "enable"]); s.set_defaults(f=cmd_ntsync)
+    s = sp.add_parser("realtime", help="real-time priority for audio (fewer clicks at small ASIO buffers): show it, or give your user the right (password prompt, then log out and in)"); s.add_argument("action", nargs="?", default="status", choices=["status", "enable"]); s.set_defaults(f=cmd_realtime)
     s = sp.add_parser("wedge", help="DirectComposition programs all hang windowless: show it, or restart the Wine session"); s.add_argument("action", nargs="?", default="status", choices=["status", "clear"]); s.set_defaults(f=cmd_wedge)
     sp.add_parser("rescue-install", help="an installer has stopped responding: stop it and finish the install from its payload").set_defaults(f=cmd_rescue)
     s = sp.add_parser("finish-installs", help="complete installs a vendor's manager started but did not finish"); s.add_argument("--no-sync", action="store_true"); s.set_defaults(f=cmd_finish_installs)
