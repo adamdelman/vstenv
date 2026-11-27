@@ -166,6 +166,7 @@ class Prefix:
     64-bit HKLM view that NI's 64-bit apps read.
     """
     REG64 = r"C:\windows\system32\reg.exe"
+    debug: tuple[Path, dict] | None = None    # (log, environment) while `run --debug` holds it (debugrun.py)
 
     def __init__(self, path: Path, build: WineBuild):
         self.path = Path(path); self.build = build
@@ -307,6 +308,7 @@ class Prefix:
     def spawn(self, args: list[str], *, env: dict | None = None, log: Path | None = None, cwd=None) -> subprocess.Popen:
         """Start a Windows program detached (GUI apps). The returned process ends
         when the program does (flatpak-spawn waits for its host command)."""
+        if self.debug: log, extra = self.debug; env = {**(env or {}), **extra}
         out = open(log, "ab") if log else subprocess.DEVNULL
         return host.popen([str(self.build.wine), *args], env=self.wine_env(env), cwd=cwd, stdout=out, stderr=out,
                           stdin=subprocess.DEVNULL, start_new_session=True)
@@ -556,7 +558,8 @@ done"""
         return cp.returncode
 
     def reg_import_values(self, values: dict[str, dict[str, tuple[str, str]]], name="vstenv-values.reg") -> int:
-        """Write many values in one regedit call. values: {'HKLM\\Software\\X': {'Name': ('REG_SZ'|'REG_DWORD'|'REG_EXPAND_SZ', data)}}"""
+        """Write many values in one regedit call. values: {'HKLM\\Software\\X': {'Name': ('REG_SZ'|'REG_DWORD'|'REG_EXPAND_SZ', data)}};
+        a kind of None deletes the value."""
         def esc(v): return v.replace("\\", "\\\\").replace('"', '\\"')
         lines = ["Windows Registry Editor Version 5.00", ""]
         for key, vals in values.items():
@@ -564,7 +567,8 @@ done"""
             root = {"HKLM": "HKEY_LOCAL_MACHINE", "HKCU": "HKEY_CURRENT_USER"}.get(root, root)
             lines.append(f"[{root}\\{rest}]")
             for n, (kind, data) in vals.items():
-                if kind == "REG_DWORD": lines.append(f'"{esc(n)}"=dword:{int(data):08x}')
+                if kind is None: lines.append(f'"{esc(n)}"=-')
+                elif kind == "REG_DWORD": lines.append(f'"{esc(n)}"=dword:{int(data):08x}')
                 elif kind == "REG_EXPAND_SZ":
                     hexs = ",".join(f"{b:02x}" for b in (str(data) + "\0").encode("utf-16-le")); lines.append(f'"{esc(n)}"=hex(2):{hexs}')
                 else: lines.append(f'"{esc(n)}"="{esc(str(data))}"')
