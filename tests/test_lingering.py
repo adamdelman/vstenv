@@ -1,3 +1,4 @@
+import os
 import subprocess
 import time
 import unittest
@@ -194,3 +195,16 @@ class RunWatchingContractTest(unittest.TestCase):
         with mock.patch.object(lingering.host, "sh",
                                return_value="42\tNTKDaemon.exe\n42\tNTKDaemon.exe\n"):
             self.assertEqual(lingering.holders(["pipe:[1]", "pipe:[2]"]), [(42, "NTKDaemon.exe")])
+
+
+class ScanTest(unittest.TestCase):
+    def test_the_host_scan_finds_a_real_holder(self):
+        """The real /proc scan: a child that kept our pipe is found, by pid and name."""
+        held = subprocess.Popen(["sleep", "30"], stdout=subprocess.PIPE)
+        other = subprocess.Popen(["sleep", "30"], stdout=subprocess.PIPE)
+        try:
+            found = lingering.holders([lingering.pipe_of(held.stdout), "pipe:[1]"], exclude={os.getpid()})
+            self.assertIn((held.pid, "sleep"), found)
+            self.assertNotIn(other.pid, [p for p, _ in found])
+        finally:
+            for p in (held, other): p.kill(); p.wait(); p.stdout.close()
