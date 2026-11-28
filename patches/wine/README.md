@@ -790,7 +790,9 @@ time-critical, its "Audio Prefetch" threads highest, both priority 15, seen with
 a tracing server), and so every thread of a
 `REALTIME_PRIORITY_CLASS` process, at 70 (priority 15) to 80
 (priority 31), below PipeWire's data loop
-(83 here, 88 by default) and JACK's, and capped by `RLIMIT_RTPRIO`. It uses
+(83 here, 88 by default) and JACK's, and capped by the program's own
+`RLIMIT_RTPRIO` (the kernel checks the limit of the thread being changed, not the
+server's; a soft limit below the hard one is raised first). It uses
 `SCHED_RESET_ON_FORK`, so a child process never inherits it, and puts a thread
 back on `SCHED_OTHER` when its priority drops. A thread that is already realtime
 and that the server did not make so is left alone: WineASIO's callback runs in
@@ -823,7 +825,8 @@ stock, the thread runs `TS` nice -11; patched, `FF` 70, then `TS` nice 0 again;
 in the realtime class `FF` 75 to 80; a thread put on `FF` 83 from outside stays
 `FF` 83 through time-critical and back to normal; a time-critical thread that
 spins alternates a quarter second at `FF` 70 and a second at `TS` nice -11, while one that
-works 1 ms in 3 stays `FF` 70, also with two spinners and the server pinned to the same two CPUs; under `prlimit --rtprio=0` (both for the
+works 1 ms in 3 stays `FF` 70, also with two spinners and the server pinned to the same two CPUs;
+a program with `RLIMIT_RTPRIO` 50 under a server with 98 gets `FF` 50, one with soft 0 and hard 98 `FF` 70; under `prlimit --rtprio=0` (both for the
 server and for the client only) `TS` nice -11, no message.
 
 Measured (WineASIO on PipeWire, quantum 64, private null sinks, 30 s each; ERR is
