@@ -1,65 +1,201 @@
 --- a/server/thread.c
 +++ b/server/thread.c
-@@ -183,11 +183,71 @@
+@@ -32,6 +32,7 @@
+ #include <unistd.h>
+ #include <time.h>
+ #include <poll.h>
++#include <pthread.h>
+ #ifdef HAVE_SCHED_H
+ /* FreeBSD needs this for cpu_set_t instead of its cpuset_t */
+ #define _WITH_CPU_SET_T
+@@ -183,11 +184,204 @@
  
  #if defined(__linux__) && defined(RLIMIT_NICE)
  static int nice_limit;
 +static int rt_limit;  /* highest SCHED_FIFO priority RLIMIT_RTPRIO allows, 0 for none */
++static int rt_guard_prio;  /* SCHED_FIFO priority of the guard thread, 0 when no realtime is handed out */
 +
 +#ifndef SCHED_RESET_ON_FORK
 +#define SCHED_RESET_ON_FORK 0x40000000
 +#endif
 +
-+static void apply_thread_priority( struct thread *thread );
-+static struct timeout_user *rt_watchdog_user;
-+
-+/* CPU time a thread has used, in ns (0 when unknown) */
-+static unsigned long long thread_cpu_ns( struct thread *thread )
++/* Realtime throttling may be off (sched_rt_runtime_us -1 or equal to the period), so a
++ * SCHED_FIFO thread that spins keeps its CPU forever, and threads that spin on every CPU
++ * they may run on would starve this (SCHED_OTHER) server too. So the threads the server makes
++ * realtime are watched by a guard thread of its own that runs SCHED_FIFO above all of them:
++ * every 250 ms, a thread that ran more than 80% of the time since the last look (at least 200 ms) goes back
++ * to SCHED_OTHER for a second, as Windows' MMCSS keeps 20% of the CPU for other threads.
++ * The guard only sees this table of unix ids (under rt_mutex, which inherits priority, so
++ * the main loop holding it is not starved); it never touches the server's objects. */
++struct rt_entry
 +{
-+    char path[64];
-+    unsigned long long ns = 0;
-+    FILE *f;
++    pid_t              pid, tid;
++    int                prio;    /* the SCHED_FIFO priority the server gave it, 0 for a free slot */
++    int                held;    /* held back at SCHED_OTHER since 'since' */
++    unsigned long long since;   /* CLOCK_MONOTONIC ns of the last look, or of the hold */
++    unsigned long long cpu;     /* its CPU time in ns at 'since' */
++};
++static struct rt_entry rt_table[256];
++static pthread_mutex_t rt_mutex;
 +
-+    snprintf( path, sizeof(path), "/proc/%d/task/%d/schedstat", thread->unix_pid, thread->unix_tid );
-+    if (!(f = fopen( path, "r" ))) return 0;
-+    if (fscanf( f, "%llu", &ns ) != 1) ns = 0;
-+    fclose( f );
-+    return ns;
++static unsigned long long monotonic_ns(void)
++{
++    struct timespec ts;
++    clock_gettime( CLOCK_MONOTONIC, &ts );
++    return ts.tv_sec * 1000000000ull + ts.tv_nsec;
 +}
 +
-+/* Realtime throttling may be off (sched_rt_runtime_us -1 or equal to the period), so a
-+ * SCHED_FIFO thread that spins could keep a CPU forever. Every second, a thread the server
-+ * made realtime that ran more than 90% of the last second goes back to SCHED_OTHER for a
-+ * second, as Windows' MMCSS holds back a thread that overruns its share. */
-+static void rt_watchdog( void *private )
++/* CPU time a thread has used, in ns; 0 when it is gone */
++static int read_cpu_ns( pid_t pid, pid_t tid, unsigned long long *ns )
 +{
-+    struct thread *thread;
-+    unsigned long long ns;
-+    struct sched_param param = { 0 };
-+    int armed = 0;
++    char path[64];
++    FILE *f;
++    int ret;
 +
-+    rt_watchdog_user = NULL;
-+    LIST_FOR_EACH_ENTRY( thread, &thread_list, struct thread, entry )
++    snprintf( path, sizeof(path), "/proc/%d/task/%d/schedstat", pid, tid );
++    if (!(f = fopen( path, "r" ))) return 0;
++    ret = fscanf( f, "%llu", ns ) == 1;
++    fclose( f );
++    return ret;
++}
++
++/* the thread runs with this policy (and SCHED_FIFO priority) */
++static int has_policy( pid_t tid, int policy, int prio )
++{
++    struct sched_param param;
++
++    if ((sched_getscheduler( tid ) & ~SCHED_RESET_ON_FORK) != policy) return 0;
++    return policy != SCHED_FIFO || (!sched_getparam( tid, &param ) && param.sched_priority == prio);
++}
++
++static void *rt_guard( void *arg )
++{
++    const struct timespec tick = { 0, 250000000 };
++    struct sched_param param;
++    unsigned long long now, cpu;
++    struct rt_entry *e;
++
++    for (;;)
 +    {
-+        if (!thread->rt_priority || thread->unix_tid == -1) continue;
-+        if (thread->rt_priority < 0)  /* held back for a second: realtime again */
++        nanosleep( &tick, NULL );
++        pthread_mutex_lock( &rt_mutex );
++        now = monotonic_ns();
++        for (e = rt_table; e < rt_table + ARRAY_SIZE(rt_table); e++)
 +        {
-+            thread->rt_priority = 0;
-+            apply_thread_priority( thread );
++            if (!e->prio) continue;
++            if (e->held)
++            {
++                if (now - e->since < 1000000000ull) continue;
++                param.sched_priority = e->prio;
++                /* someone else changed it meanwhile: theirs now */
++                if (!has_policy( e->tid, SCHED_OTHER, 0 ) ||
++                    sched_setscheduler( e->tid, SCHED_FIFO | SCHED_RESET_ON_FORK, &param ))
++                {
++                    e->prio = 0;
++                    continue;
++                }
++                e->held = 0;
++            }
++            else if (!has_policy( e->tid, SCHED_FIFO, e->prio ) || !read_cpu_ns( e->pid, e->tid, &cpu ))
++            {
++                e->prio = 0;  /* gone, or someone else changed it */
++                continue;
++            }
++            else if (now - e->since < 200000000ull) continue;  /* too short a time to judge: keep the baseline */
++            else if ((cpu - e->cpu) * 5 > (now - e->since) * 4)
++            {
++                if (debug_level) fprintf( stderr, "wineserver: unix thread %d ran %llu of the last %llu ms at SCHED_FIFO, held back\n",
++                                          e->tid, (cpu - e->cpu) / 1000000, (now - e->since) / 1000000 );
++                param.sched_priority = 0;
++                sched_setscheduler( e->tid, SCHED_OTHER | SCHED_RESET_ON_FORK, &param );
++                e->held = 1;
++                e->since = now;
++                continue;
++            }
++            e->since = now;
++            if (!read_cpu_ns( e->pid, e->tid, &e->cpu )) e->prio = 0;
 +        }
-+        else if ((ns = thread_cpu_ns( thread )) && thread->rt_runtime && ns - thread->rt_runtime > 900000000ull)
-+        {
-+            if (debug_level) fprintf( stderr, "%04x: ran %llu ms of the last second at SCHED_FIFO, held back\n",
-+                                      thread->id, (ns - thread->rt_runtime) / 1000000 );
-+            sched_setscheduler( thread->unix_tid, SCHED_OTHER | SCHED_RESET_ON_FORK, &param );
-+            thread->rt_priority = -1;
-+            apply_thread_priority( thread );  /* the nice value instead */
-+        }
-+        if (thread->rt_priority) thread->rt_runtime = thread_cpu_ns( thread );
-+        armed |= thread->rt_priority != 0;
++        pthread_mutex_unlock( &rt_mutex );
 +    }
-+    /* apply_thread_priority may have armed it already */
-+    if (armed && !rt_watchdog_user) rt_watchdog_user = add_timeout_user( -TICKS_PER_SEC, rt_watchdog, NULL );
++    return NULL;
++}
++
++/* start the guard; without it no thread is made realtime */
++static void init_rt_guard(void)
++{
++    pthread_mutexattr_t mattr;
++    pthread_attr_t attr;
++    struct sched_param param;
++    sigset_t all, old;
++    pthread_t guard;
++
++    if (rt_limit < 2) return;  /* the guard must run above the threads it watches */
++    param.sched_priority = min( rt_limit, 81 );
++    pthread_mutexattr_init( &mattr );
++    pthread_mutexattr_setprotocol( &mattr, PTHREAD_PRIO_INHERIT );
++    pthread_mutex_init( &rt_mutex, &mattr );
++    pthread_attr_init( &attr );
++    pthread_attr_setinheritsched( &attr, PTHREAD_EXPLICIT_SCHED );
++    pthread_attr_setschedpolicy( &attr, SCHED_FIFO );
++    pthread_attr_setschedparam( &attr, &param );
++    pthread_attr_setstacksize( &attr, 64 * 1024 );
++    sigfillset( &all );
++    pthread_sigmask( SIG_SETMASK, &all, &old );  /* the server's signals stay with the main thread */
++    if (!pthread_create( &guard, &attr, rt_guard, NULL )) rt_guard_prio = param.sched_priority;
++    else if (debug_level) fprintf( stderr, "wineserver: no SCHED_FIFO guard thread, no realtime threads\n" );
++    pthread_sigmask( SIG_SETMASK, &old, NULL );
++    pthread_attr_destroy( &attr );
++}
++
++/* make the thread SCHED_FIFO at prio, or not realtime for prio 0; returns 0 to leave the thread alone */
++static int set_thread_rt_priority( struct thread *thread, int prio )
++{
++    struct sched_param param = { 0 };
++    struct rt_entry *e = NULL, *free_slot = NULL;
++    int policy, ret = 1;
++
++    if (!rt_guard_prio) return 1;
++    pthread_mutex_lock( &rt_mutex );
++    for (e = rt_table; e < rt_table + ARRAY_SIZE(rt_table); e++)
++    {
++        if (e->prio && e->tid == thread->unix_tid && e->pid == thread->unix_pid) break;
++        if (!e->prio && !free_slot) free_slot = e;
++    }
++    if (e == rt_table + ARRAY_SIZE(rt_table)) e = NULL;
++
++    policy = sched_getscheduler( thread->unix_tid ) & ~SCHED_RESET_ON_FORK;
++    /* a thread made realtime by someone else (pipewire-jack's data loop) is left alone */
++    if (!e && (policy == SCHED_FIFO || policy == SCHED_RR)) ret = 0;
++    else if (prio && e && e->held) e->prio = prio;  /* the guard gives it back */
++    else if (prio && (e || (e = free_slot)))
++    {
++        param.sched_priority = prio;
++        if (!sched_setscheduler( thread->unix_tid, SCHED_FIFO | SCHED_RESET_ON_FORK, &param ))
++        {
++            if (!e->prio)
++            {
++                memset( e, 0, sizeof(*e) );
++                e->pid = thread->unix_pid;
++                e->tid = thread->unix_tid;
++                e->since = monotonic_ns();
++                read_cpu_ns( e->pid, e->tid, &e->cpu );
++            }
++            e->prio = prio;
++        }
++        else if (e->prio)
++        {
++            sched_setscheduler( thread->unix_tid, SCHED_OTHER | SCHED_RESET_ON_FORK, &param );
++            e->prio = 0;
++        }
++    }
++    else if (e)
++    {
++        if (!e->held) sched_setscheduler( thread->unix_tid, SCHED_OTHER | SCHED_RESET_ON_FORK, &param );
++        e->prio = 0;
++    }
++    thread->rt_priority = e ? e->prio : 0;
++    pthread_mutex_unlock( &rt_mutex );
++    return ret;
 +}
  
  void init_threading(void)
@@ -67,60 +203,47 @@
      struct rlimit rlimit;
  
 +    if (!getrlimit( RLIMIT_RTPRIO, &rlimit ))
++    {
++        rlimit.rlim_cur = rlimit.rlim_max;
++        setrlimit( RLIMIT_RTPRIO, &rlimit );
 +        rt_limit = rlimit.rlim_cur == RLIM_INFINITY ? 99 : min( rlimit.rlim_cur, 99 );
++    }
++    init_rt_guard();
 +
      /* if wineserver has cap_sys_nice we are unlimited, but leave -20 to the user */
      if (!setpriority( PRIO_PROCESS, getpid(), -20 )) nice_limit = -19;
      setpriority( PRIO_PROCESS, getpid(), 0 );
-@@ -207,6 +267,31 @@
+@@ -207,6 +401,15 @@
  {
      int min = -nice_limit, max = nice_limit, range = max - min, niceness;
      int effective_priority = get_effective_thread_priority( thread );
-+    struct sched_param param = { 0 };
-+    int policy;
++    int prio = 0;
 +
-+    /* time-critical and realtime-class threads (audio callbacks) run SCHED_FIFO 70-80,
-+     * below PipeWire's and JACK's own audio threads, when RLIMIT_RTPRIO allows it */
-+    if (rt_limit && thread->unix_tid != -1 && thread->rt_priority >= 0)
-+    {
-+        policy = sched_getscheduler( thread->unix_tid ) & ~SCHED_RESET_ON_FORK;
-+        /* a thread made realtime by someone else (pipewire-jack's data loop) is left alone */
-+        if (!thread->rt_priority && (policy == SCHED_FIFO || policy == SCHED_RR)) return;
-+        /* priority 15 and up: time-critical, or highest in the high class (Cubase's Audio Prefetch threads) */
-+        if (thread->priority >= LOW_REALTIME_PRIORITY - 1)
-+        {
-+            param.sched_priority = min( rt_limit, 70 + (effective_priority - 15) * 10 / 16 );
-+            if (!sched_setscheduler( thread->unix_tid, SCHED_FIFO | SCHED_RESET_ON_FORK, &param ))
-+            {
-+                if (!thread->rt_priority) thread->rt_runtime = thread_cpu_ns( thread );
-+                thread->rt_priority = param.sched_priority;
-+                if (!rt_watchdog_user) rt_watchdog_user = add_timeout_user( -TICKS_PER_SEC, rt_watchdog, NULL );
-+                return;
-+            }
-+        }
-+        if (thread->rt_priority) sched_setscheduler( thread->unix_tid, SCHED_OTHER | SCHED_RESET_ON_FORK, &param );
-+        thread->rt_priority = 0;
-+    }
++    if (thread->unix_tid == -1) return;
++    /* priority 15 and up: time-critical, or highest in the high class (Cubase's Audio Prefetch threads)
++     * run SCHED_FIFO 70-80, below PipeWire's and JACK's own audio threads and the guard */
++    if (thread->priority >= LOW_REALTIME_PRIORITY - 1)
++        prio = max( 0, min( rt_guard_prio - 1, 70 + (effective_priority - 15) * 10 / 16 ));
++    if (!set_thread_rt_priority( thread, prio )) return;
++    /* the nice value is set even under SCHED_FIFO: it is what the thread runs at when held back */
  
      if (nice_limit >= 0) return;
  
-@@ -369,6 +454,8 @@
+@@ -369,6 +572,7 @@
      thread->priority        = 0;
      thread->base_priority   = 0;
      thread->disable_boost   = 0;
 +    thread->rt_priority     = 0;
-+    thread->rt_runtime      = 0;
      thread->suspend         = 0;
      thread->dbg_hidden      = 0;
      thread->bypass_proc_suspend = 0;
 --- a/server/thread.h
 +++ b/server/thread.h
-@@ -87,6 +87,8 @@
+@@ -87,6 +87,7 @@
      int                    priority;      /* current thread priority */
      int                    base_priority; /* base priority level (relative to process base priority class) */
      int                    disable_boost; /* disable thread priority boost */
-+    int                    rt_priority;   /* SCHED_FIFO priority the server gave the thread, 0 for none, -1 held back */
-+    unsigned long long     rt_runtime;    /* its CPU time in ns at the last realtime watchdog check */
++    int                    rt_priority;   /* SCHED_FIFO priority the server gave the thread, 0 for none */
      int                    suspend;       /* suspend count */
      bool                   is_system;     /* system thread (kernel mode only) */
      bool                   dbg_hidden;    /* hidden from debugger */

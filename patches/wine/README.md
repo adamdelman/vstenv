@@ -800,11 +800,17 @@ host calling `SetThreadPriority` on it must neither lower it to 70 nor drop it t
 
 Realtime throttling can be off (`sched_rt_runtime_us` -1, or equal to the
 period, as on the machine this was made on), and then a `SCHED_FIFO` thread that
-spins keeps its CPU for good. So the server checks every second, while it has
-made any thread realtime, how much CPU each such thread used (`schedstat`): one
-that ran more than 90% of the last second goes back to `SCHED_OTHER` (its nice
-value) for a second, then realtime again, much as Windows' MMCSS holds back a
-thread that overruns its share. An audio thread that sleeps between periods is
+spins keeps its CPU for good; threads that spin on every CPU they may use would
+also starve the server itself (`SCHED_OTHER`), so a check in its main loop is no
+guard. The server starts a guard thread of its own on `SCHED_FIFO` above every
+thread it makes realtime (81, or the server's `RLIMIT_RTPRIO`, and the threads
+then go at most one below it); without one (no rights) no thread is made
+realtime. Every 250 ms the guard reads the CPU time (`schedstat`) of each thread
+the server made realtime: one that ran more than 80% of the measured time since
+the last look (at least 200 ms) goes back to `SCHED_OTHER` (its nice value) for
+a second, then realtime again, much as Windows' MMCSS keeps 20% of the CPU for
+other threads. It works from a table of unix ids that the main loop fills under a
+priority-inheriting lock, and never touches the server's objects. An audio thread that sleeps between periods is
 never held back. With `RLIMIT_RTPRIO` 0 (no
 `@audio`/`@realtime` limits), or when the kernel refuses, nothing changes: the
 nice mapping applies as before. Wine-Staging carried an opt-in version of this
@@ -816,8 +822,8 @@ Checked with a test program (`SetThreadPriority` time-critical, then normal):
 stock, the thread runs `TS` nice -11; patched, `FF` 70, then `TS` nice 0 again;
 in the realtime class `FF` 75 to 80; a thread put on `FF` 83 from outside stays
 `FF` 83 through time-critical and back to normal; a time-critical thread that
-spins alternates a second at `FF` 70 and a second at `TS` nice -11, while one that
-works 1 ms in 3 stays `FF` 70; under `prlimit --rtprio=0` (both for the
+spins alternates a quarter second at `FF` 70 and a second at `TS` nice -11, while one that
+works 1 ms in 3 stays `FF` 70, also with two spinners and the server pinned to the same two CPUs; under `prlimit --rtprio=0` (both for the
 server and for the client only) `TS` nice -11, no message.
 
 Measured (WineASIO on PipeWire, quantum 64, private null sinks, 30 s each; ERR is
