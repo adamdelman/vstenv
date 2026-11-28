@@ -33,9 +33,9 @@ RELEASE_REPO = "adamdelman/vstenv"   # Cubase test build: the patched DLLs come 
 # The exact tarball this build installs, pinned like wine.WINE_BUILD: a different
 # file (a re-uploaded asset, a swapped download) is refused by its sha256 before
 # anything is unpacked. Its manifest.json then checks every DLL inside.
-WINE_FIXES = {"tag": "v0.1.169-cubase.1",
-              "url": f"https://github.com/{RELEASE_REPO}/releases/download/v0.1.169-cubase.1/wine-fixes-11.17.tar.gz",
-              "sha256": "889dd492cad38d2af8be8d595f6cb494b0f43e3d469a348f5012be7086eed308"}
+WINE_FIXES = {"tag": "v0.1.169-cubase.5",
+              "url": f"https://github.com/{RELEASE_REPO}/releases/download/v0.1.169-cubase.5/wine-fixes-11.17.tar.gz",
+              "sha256": "d4704b2c94f051dd2fe9ade38c7f0cba69e3e36dc2ecad3ea45f77a93814fb4e"}
 PE_DIR = "lib/wine/x86_64-windows"
 MARKER_NAME = "vstenv-wine-fixes.json"
 FIXES = {"dcomp.dll": "DirectComposition (Steinberg's VSTGUI: HALion Sonic 7, Cubase, Dorico; JUCE 8 GUIs: Spitfire Audio), "
