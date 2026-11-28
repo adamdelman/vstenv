@@ -87,7 +87,7 @@ echo "== configure again, with X/OpenGL/Vulkan, for the unix libraries"
     --without-gstreamer --without-wayland --without-dbus --without-usb --without-udev \
     --without-gnutls --without-krb5 --without-sane --without-gphoto --without-cups --without-netapi \
     --without-opencl --without-pcap --without-pcsclite --without-capi --without-v4l2 --without-oss --without-ffmpeg \
-    --without-inotify --without-sdl >/dev/null
+    --without-sdl >/dev/null
 # Every optional part the pinned winex11.so has; a missing -dev package would
 # silently drop one (XInput2 is the mouse, Xcursor the pointer themes).
 for FEATURE in SONAME_LIBXCURSOR SONAME_LIBXI SONAME_LIBXRANDR SONAME_LIBXRENDER SONAME_LIBXFIXES SONAME_LIBXINERAMA \
@@ -101,6 +101,32 @@ for U in "${UNIX_MODULES[@]}"; do
     make -j"$(nproc)" "$(unix_module_path "$U")" >/dev/null
     strip --strip-unneeded -o "$PKG/x86_64-unix/$U" "$SRC/$(unix_module_path "$U")" 2>/dev/null || cp "$SRC/$(unix_module_path "$U")" "$PKG/x86_64-unix/$U"
 done
+# wineserver (bin/): time-critical threads (audio callbacks) get SCHED_FIFO where
+# RLIMIT_RTPRIO allows. Built from the second configure, which keeps inotify (the
+# server's directory change notifications) as the pinned build has it.
+echo "== build wineserver"
+make -j"$(nproc)" server/wineserver >/dev/null
+mkdir -p "$PKG/bin"
+strip --strip-unneeded -o "$PKG/bin/wineserver" server/wineserver
+# The pinned build's ntdll talks to the server by request number, so the rebuilt server must list
+# the same requests in the same order as the pinned build's own (a vanilla tree, or a staging
+# set that differs, would fail every program with "version mismatch"). The names are in the
+# binaries in request order (strings tail-merges a few, the same way in both).
+# WINE_FIXES_PINNED=<the pinned build's bin/wineserver> skips the download of the build.
+echo "== wineserver requests against the pinned build's"
+sed -n 's/^    REQ_\([a-z0-9_]*\),$/\1/p' include/wine/server_protocol.h > "$WORK/requests"
+requests() { strings -n 1 "$1" | awk -v f="$WORK/requests" 'BEGIN { while ((getline l < f) > 0) r[l] = 1 } /^new_process$/ { on = 1 } on && !($0 in r) { on = 0; done = 1 } on && !done { print }'; }   # reads to the end: no SIGPIPE under pipefail
+PINNED="${WINE_FIXES_PINNED:-}"
+if [ -z "$PINNED" ]; then
+    read -r PIN_URL PIN_SHA < <(python3 -c "import sys; sys.path.insert(0, sys.argv[1]); from vstenv.wine import WINE_BUILD as b; print(b['url'], b['sha256'])" "$HERE")
+    curl -fsSL -o "$WORK/pinned.tar.xz" "$PIN_URL"
+    echo "$PIN_SHA  $WORK/pinned.tar.xz" | sha256sum -c - >/dev/null || { echo "pinned Wine build does not match its sha256" >&2; exit 1; }
+    mkdir -p "$WORK/pinned"; tar -xJf "$WORK/pinned.tar.xz" -C "$WORK/pinned" --strip-components=2 --wildcards '*/bin/wineserver'
+    PINNED="$WORK/pinned/wineserver"
+fi
+requests "$PINNED" > "$WORK/requests.pinned"; requests server/wineserver > "$WORK/requests.built"
+[ "$(wc -l < "$WORK/requests.built")" -gt 200 ] || { echo "found no request names in the rebuilt wineserver" >&2; exit 1; }
+diff -u "$WORK/requests.pinned" "$WORK/requests.built" >&2 || { echo "the rebuilt wineserver's requests differ from the pinned build's (see above)" >&2; exit 1; }
 # WineASIO (ASIO over JACK/PipeWire): a Winelib library, so it is built with the patched
 # tree's own winegcc/winebuild against the unix-side import libraries. Wine loads its
 # unix half only under the name wineasio.dll.so (the AUR's wineasio64.dll.so is ignored);
@@ -158,7 +184,7 @@ import hashlib, json, os, sys
 from pathlib import Path
 pkg, version, patches = Path(sys.argv[1]), sys.argv[2], [os.path.basename(p) for p in sys.argv[3:]]
 files = {f.relative_to(pkg).as_posix(): hashlib.sha256(f.read_bytes()).hexdigest()
-         for f in sorted(pkg.rglob("*")) if f.is_file() and f.suffix in (".dll", ".exe", ".sys", ".so")}
+         for f in sorted(pkg.rglob("*")) if f.is_file() and (f.suffix in (".dll", ".exe", ".sys", ".so") or f.name == "wineserver")}
 (pkg / "manifest.json").write_text(json.dumps({"wine_version": version, "files": files, "patches": patches,
     "note": "dcomp: DirectComposition for Steinberg's products; advapi32: credential attributes for Steinberg's License Engine sign-in"}, indent=2))
 EOF
