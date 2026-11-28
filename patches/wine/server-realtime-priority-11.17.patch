@@ -8,7 +8,7 @@
  #ifdef HAVE_SCHED_H
  /* FreeBSD needs this for cpu_set_t instead of its cpuset_t */
  #define _WITH_CPU_SET_T
-@@ -183,11 +184,234 @@
+@@ -183,11 +184,247 @@
  
  #if defined(__linux__) && defined(RLIMIT_NICE)
  static int nice_limit;
@@ -147,6 +147,19 @@
 +    pthread_attr_destroy( &attr );
 +}
 +
++/* a thread that ended is no longer watched: its unix tid may be reused */
++static void forget_thread_rt_priority( struct thread *thread )
++{
++    struct rt_entry *e;
++
++    if (!thread->rt_priority) return;
++    pthread_mutex_lock( &rt_mutex );
++    for (e = rt_table; e < rt_table + ARRAY_SIZE(rt_table); e++)
++        if (e->prio && e->tid == thread->unix_tid && e->pid == thread->unix_pid) e->prio = 0;
++    pthread_mutex_unlock( &rt_mutex );
++    thread->rt_priority = 0;
++}
++
 +/* The highest SCHED_FIFO priority the kernel lets the threads of a client have: it checks the
 + * RLIMIT_RTPRIO of the thread being changed, not the server's. A soft limit below the hard one
 + * is raised, as the server does for its own. */
@@ -243,13 +256,13 @@
      /* if wineserver has cap_sys_nice we are unlimited, but leave -20 to the user */
      if (!setpriority( PRIO_PROCESS, getpid(), -20 )) nice_limit = -19;
      setpriority( PRIO_PROCESS, getpid(), 0 );
-@@ -207,6 +431,16 @@
+@@ -207,6 +444,16 @@
  {
      int min = -nice_limit, max = nice_limit, range = max - min, niceness;
      int effective_priority = get_effective_thread_priority( thread );
 +    int prio = 0;
 +
-+    if (thread->unix_tid == -1) return;
++    if (thread->unix_tid == -1 || thread->state == TERMINATED) return;
 +    /* priority 15 and up: time-critical, or highest in the high class (Cubase's Audio Prefetch threads)
 +     * run SCHED_FIFO 70-80, below PipeWire's and JACK's own audio threads and the guard */
 +    if (thread->priority >= LOW_REALTIME_PRIORITY - 1)
@@ -260,7 +273,7 @@
  
      if (nice_limit >= 0) return;
  
-@@ -369,6 +603,7 @@
+@@ -369,6 +616,7 @@
      thread->priority        = 0;
      thread->base_priority   = 0;
      thread->disable_boost   = 0;
@@ -268,6 +281,16 @@
      thread->suspend         = 0;
      thread->dbg_hidden      = 0;
      thread->bypass_proc_suspend = 0;
+@@ -1591,6 +1839,9 @@
+ {
+     if (thread->state == TERMINATED) return;  /* already killed */
+     thread->state = TERMINATED;
++#if defined(__linux__) && defined(RLIMIT_NICE)
++    forget_thread_rt_priority( thread );
++#endif
+     thread->exit_time = current_time;
+     if (current == thread) current = NULL;
+     if (debug_level)
 --- a/server/thread.h
 +++ b/server/thread.h
 @@ -87,6 +87,7 @@
