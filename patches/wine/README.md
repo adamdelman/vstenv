@@ -819,3 +819,19 @@ in the realtime class `FF` 75 to 80; a thread put on `FF` 83 from outside stays
 spins alternates a second at `FF` 70 and a second at `TS` nice -11, while one that
 works 1 ms in 3 stays `FF` 70; under `prlimit --rtprio=0` (both for the
 server and for the client only) `TS` nice -11, no message.
+
+Measured (WineASIO on PipeWire, quantum 64, private null sinks, 30 s each; ERR is
+PipeWire's xrun count for Cubase's node, clicks and zero runs from the capture):
+
+| Cubase | server | sine: ERR, clicks, zero runs | HALion pad: ERR, clicks |
+|---|---|---|---|
+| 16 | stock | +6, 7, 2 | +13, 13 |
+| 16 | patched | +4, 4, 0 / +0, 1, 1 | +0, 0 / +1, 1 |
+| 15 | stock | +4, 4, 0 | +8, 4 |
+| 15 | patched | +1, 1, 0 | +0, 1 |
+
+At 128 and 256 both stay clean (ERR 0). What is left at 64 is not Wine's: a
+minimal ASIO host with an empty callback (about 1 µs) and a native JACK client
+on the same graph drop the same (ERR 2 to 6 a minute each, wake-ups up to about
+3 ms late), with deep C-states off too, and the native client drops just the same
+when the Scarlett 2i2's own clock drives the graph instead of the null sink.

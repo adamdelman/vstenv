@@ -54,7 +54,7 @@ FIXES = {"dcomp.dll": "DirectComposition (Steinberg's VSTGUI: HALion Sonic 7, Cu
          "nirescan.exe": "NI controllers plugged in after Wine started are seen (Komplete Kontrol keyboards, Maschine; from ni-wine)",
          "x86_64-unix/winex11.so": "a cursor set from another process shows as an arrow, not nothing (WebView2 windows: Minimal Hub); a dropped file's dialog takes clicks, one taskbar click restores a minimized window, and closing a window ends its open menu first (Cubase 14)",
          "x86_64-unix/win32u.so": "menu icons keep their alpha (32-bit menu bitmaps are alpha-blended); built with FreeType and fontconfig",
-         "bin/wineserver": "time-critical threads (Cubase's audio workers) run SCHED_FIFO 70-80 where RLIMIT_RTPRIO allows (WineASIO at 64 samples dropped periods)",
+         "bin/wineserver": "threads at priority 15 and up (Cubase's audio workers) run SCHED_FIFO 70-80 where RLIMIT_RTPRIO allows (WineASIO at 64 samples dropped periods)",
          "msi.dll": "a feature's cost over its children reads the child features (Cubase 16's Setup.exe crashed in MsiGetFeatureCost, so the Download Assistant's install failed)",
          "windows.globalization.dll": "the Windows.Globalization.Calendar class (Cubase 14-16's head-tracking module died at start without it)",
          "windows.perception.stub.dll": "SpatialLocator.GetDefault says \"no headset\" (Cubase 14-16's head-tracking module died at start)"}
