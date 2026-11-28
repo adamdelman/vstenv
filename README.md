@@ -1,9 +1,9 @@
 # VST Environment for Linux
 
-> **Cubase test build (v0.1.171-cubase.2).** This branch is a test build of the
+> **Cubase test build (v0.1.171-cubase.3).** This branch is a test build of the
 > Cubase 14–16 fixes, not an official vstenv release. To try it, download
 > `vstenv.flatpak` from the
-> [v0.1.171-cubase.2 release](https://github.com/adamdelman/vstenv/releases/tag/v0.1.171-cubase.2)
+> [v0.1.171-cubase.3 release](https://github.com/adamdelman/vstenv/releases/tag/v0.1.171-cubase.3)
 > and install it:
 >
 > ```sh
@@ -452,7 +452,7 @@ Both builds ran on public GitHub Actions on the fork, from the commits on this b
 
 - Run A, [v0.1.171-cubase.1](https://github.com/adamdelman/vstenv/actions/runs/46125823379),
   built the patched Wine DLLs (`wine-fixes-11.17.tar.gz`) from the Wine sources plus `patches/wine/`.
-- Run B, [v0.1.171-cubase.2](https://github.com/adamdelman/vstenv/actions?query=branch%3Av0.1.171-cubase.2),
+- Run B, [v0.1.171-cubase.3](https://github.com/adamdelman/vstenv/actions?query=branch%3Av0.1.171-cubase.3),
   built the Flatpak you install. That Flatpak downloads run A's DLLs by their sha256, given below.
 
 Downloads the app makes, checked by sha256. A file that doesn't match is refused:
