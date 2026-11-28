@@ -8,7 +8,7 @@
  #ifdef HAVE_SCHED_H
  /* FreeBSD needs this for cpu_set_t instead of its cpuset_t */
  #define _WITH_CPU_SET_T
-@@ -183,11 +184,225 @@
+@@ -183,11 +184,234 @@
  
  #if defined(__linux__) && defined(RLIMIT_NICE)
  static int nice_limit;
@@ -184,9 +184,18 @@
 +    }
 +    if (e == rt_table + ARRAY_SIZE(rt_table)) e = NULL;
 +
-+    policy = sched_getscheduler( thread->unix_tid ) & ~SCHED_RESET_ON_FORK;
++    /* someone else changed what the server set (the guard then dropped it, or it is still
++     * listed): theirs now, and left alone */
++    if (e && !has_policy( thread->unix_tid, e->held ? SCHED_OTHER : SCHED_FIFO, e->prio ))
++    {
++        e->prio = 0;
++        e = NULL;
++        ret = 0;
++    }
++    else if (!e && thread->rt_priority) ret = 0;
 +    /* a thread made realtime by someone else (pipewire-jack's data loop) is left alone */
-+    if (!e && (policy == SCHED_FIFO || policy == SCHED_RR)) ret = 0;
++    else if (!e && ((policy = sched_getscheduler( thread->unix_tid ) & ~SCHED_RESET_ON_FORK) == SCHED_FIFO ||
++                    policy == SCHED_RR)) ret = 0;
 +    else if (prio && e && e->held) e->prio = prio;  /* the guard gives it back */
 +    else if (prio && (e || (e = free_slot)))
 +    {
@@ -234,7 +243,7 @@
      /* if wineserver has cap_sys_nice we are unlimited, but leave -20 to the user */
      if (!setpriority( PRIO_PROCESS, getpid(), -20 )) nice_limit = -19;
      setpriority( PRIO_PROCESS, getpid(), 0 );
-@@ -207,6 +422,16 @@
+@@ -207,6 +431,16 @@
  {
      int min = -nice_limit, max = nice_limit, range = max - min, niceness;
      int effective_priority = get_effective_thread_priority( thread );
@@ -251,7 +260,7 @@
  
      if (nice_limit >= 0) return;
  
-@@ -369,6 +594,7 @@
+@@ -369,6 +603,7 @@
      thread->priority        = 0;
      thread->base_priority   = 0;
      thread->disable_boost   = 0;

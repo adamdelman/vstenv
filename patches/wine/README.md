@@ -798,7 +798,9 @@ back on `SCHED_OTHER` when its priority drops. A thread that is already realtime
 and that the server did not make so is left alone: WineASIO's callback runs in
 pipewire-jack's data loop, a Wine thread PipeWire itself puts on FIFO 83, and a
 host calling `SetThreadPriority` on it must neither lower it to 70 nor drop it to
-`SCHED_OTHER`.
+`SCHED_OTHER`. The same goes for a thread the server made realtime and someone
+else then changed: before changing a thread again the server checks that it still
+has the policy and priority the server gave it.
 
 Realtime throttling can be off (`sched_rt_runtime_us` -1, or equal to the
 period, as on the machine this was made on), and then a `SCHED_FIFO` thread that
