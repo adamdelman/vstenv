@@ -259,6 +259,20 @@ class ReportDebugLogsTest(unittest.TestCase):
         self.assertNotIn(home.name, out.replace("<user>", "")); self.assertIn("\\??\\unix~\\a", out)
         self.assertIn("users\\<user>\\c", out); self.assertIn("loginnamex", out)
 
+    def test_scrub_host_and_login_names_as_words(self):
+        # Steinberg Download Assistant's log names the machine and who started it.
+        log = ("adam-desktop.lan: SDA 2.1 started by adam in C:\\Program Files (x86)\\Steinberg\n"
+               "ADAM-DESKTOP ok; adamant adams madam stay; user is ADAM; xy too short")
+        with mock.patch.object(report, "_login", return_value="adam"), \
+             mock.patch.object(report, "_hostname", return_value="adam-desktop.lan"), \
+             mock.patch.object(Path, "home", return_value=Path("/home/adam")):
+            out = report.scrub(log)
+        self.assertEqual(out, "<host>: SDA 2.1 started by <user> in C:\\Program Files (x86)\\Steinberg\n"
+                              "<host> ok; adamant adams madam stay; user is <user>; xy too short")
+        with mock.patch.object(report, "_login", return_value="user"), mock.patch.object(report, "_hostname", return_value="localhost"), \
+             mock.patch.object(Path, "home", return_value=Path("/home/xy")):
+            self.assertEqual(report.scrub("C:\\users\\user and user on localhost, xy"), "C:\\users\\<user> and <user> on localhost, xy")   # placeholders and localhost left alone
+
     def test_steinberg_crash_dumps(self):
         pfx = self.d / "pfx"; dumps = pfx / "u" / report.CRASH_DUMPS; dumps.mkdir(parents=True)
         (dumps / "Cubase 1.dmp").write_bytes(b"MDMP old"); os.utime(dumps / "Cubase 1.dmp", (1, 1))

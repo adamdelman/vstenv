@@ -11,7 +11,7 @@ the report either.
 """
 from __future__ import annotations
 
-import getpass, io, json, os, platform, re, subprocess, tarfile, time
+import getpass, io, json, os, platform, re, socket, subprocess, tarfile, time
 from pathlib import Path
 
 from . import APP_NAME, paths, wine, host
@@ -36,8 +36,20 @@ def scrub(text: str) -> str:
     text = re.sub(r"(?i)" + homes, "~", text)
     for user in {home.name, _login()} - {""}:
         text = re.sub(r"(?i)(" + sep + r"users" + sep + r")" + re.escape(user) + end, r"\1<user>", text)
+    # The host and login names as words anywhere (an installer's "started by
+    # <user>", a log line naming the machine); longest first, so a host name
+    # holding the login name goes whole. Names under 3 letters would mangle text.
+    host = _hostname()
+    names = {n: "<host>" for n in (host, host.split(".")[0]) if n.lower() not in ("localhost", "localhost.localdomain")}
+    names.update((n, "<user>") for n in (home.name, _login()))
+    for n in sorted(names, key=len, reverse=True):
+        if len(n) >= 3: text = re.sub(r"(?i)(?<![\w<])" + re.escape(n) + r"(?![\w>])", names[n], text)
     for rx, sub in REDACT: text = rx.sub(sub, text)
     return text
+
+def _hostname() -> str:
+    try: return socket.gethostname()
+    except Exception: return ""
 
 def _login() -> str:
     try: return getpass.getuser()
