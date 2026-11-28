@@ -101,7 +101,9 @@ def has(build: wine.WineBuild | None, dll: str) -> bool: return dll in installed
 
 def status(build: wine.WineBuild | None) -> dict:
     inst = installed(build)
-    missing = [d for d in FIXES if d not in inst]
+    # only what the installed tarball carries: an older release without bin/wineserver is complete, not missing it for good
+    offered = set((marker(build) or {}).get("offered") or FIXES)
+    missing = [d for d in FIXES if d in offered and d not in inst]
     return {"installed": not missing, "files": sorted(inst), "missing": missing, "asset": asset_name(build), "marker": marker(build) if build else None}
 
 def _release(r) -> tuple[dict | None, str]:
@@ -166,7 +168,7 @@ def install(build: wine.WineBuild, reporter=None, force=False) -> dict[str, str]
         finally:   # record what did land even if a later copy failed (disk full): status() must not deny a DLL that is in place
             m = marker(build) or {}
             files = dict(m.get("files") or {}); files.update(done)
-            (build.root / MARKER_NAME).write_text(json.dumps({"wine_version": wine_version(build), "files": files, "source": label, "release": tag,
+            (build.root / MARKER_NAME).write_text(json.dumps({"wine_version": wine_version(build), "files": files, "source": label, "release": tag, "offered": sorted(man.get("files", {})),
                                                                "patches": man.get("patches", []), "installed": date.today().isoformat()}, indent=2))
     (r.ok if done else r.fail)(", ".join(f"{n} ({FIXES.get(n, 'patched')})" for n in done) if done else "nothing usable in the tarball")
     return installed(build)

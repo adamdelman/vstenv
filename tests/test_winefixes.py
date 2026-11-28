@@ -80,7 +80,10 @@ class WineFixesTest(unittest.TestCase):
             with tarfile.open(old, "w:gz") as t: t.add(tmp / "x/wine-fixes", arcname="wine-fixes")
             with mock.patch.dict("os.environ", {"VSTENV_WINE_FIXES": str(old)}): got = winefixes.install(b)
             self.assertEqual(sorted(got), sorted(set(winefixes.FIXES) - {"x86_64-unix/win32u.so"}))
-            self.assertEqual(sorted(winefixes.status(b)["missing"]), ["x86_64-unix/win32u.so"])
+            # what the tarball does not carry is not applicable: an older release without bin/wineserver must not count as missing for good
+            st = winefixes.status(b); self.assertEqual(st["missing"], []); self.assertTrue(st["installed"])
+            with mock.patch.dict("os.environ", {"VSTENV_WINE_FIXES": str(old)}), mock.patch.object(winefixes.shutil, "copy2") as copy:
+                winefixes.install(b); copy.assert_not_called()   # in place: not reinstalled on every start
     def test_install_refuses_a_tarball_for_another_wine(self):
         with tempfile.TemporaryDirectory() as d:
             tmp = Path(d); b = _fake_build(tmp); tgz = _tarball(tmp, version="10.0")
@@ -136,7 +139,10 @@ class WineFixesTest(unittest.TestCase):
             with tarfile.open(old, "w:gz") as t: t.add(tmp / "x/wine-fixes", arcname="wine-fixes")
             with mock.patch.dict("os.environ", {"VSTENV_WINE_FIXES": str(old)}): got = winefixes.install(b)
             self.assertEqual(sorted(got), sorted(set(winefixes.FIXES) - {"x86_64-unix/win32u.so"}))
-            self.assertEqual(sorted(winefixes.status(b)["missing"]), ["x86_64-unix/win32u.so"])
+            # what the tarball does not carry is not applicable: an older release without bin/wineserver must not count as missing for good
+            st = winefixes.status(b); self.assertEqual(st["missing"], []); self.assertTrue(st["installed"])
+            with mock.patch.dict("os.environ", {"VSTENV_WINE_FIXES": str(old)}), mock.patch.object(winefixes.shutil, "copy2") as copy:
+                winefixes.install(b); copy.assert_not_called()   # in place: not reinstalled on every start
     def test_install_refuses_a_tarball_for_another_wine(self):
         with tempfile.TemporaryDirectory() as d:
             tmp = Path(d); b = _fake_build(tmp); tgz = _tarball(tmp, version="10.0")
