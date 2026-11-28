@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import re
 
-from . import host, paths
+from . import APP_NAME, host, paths
 
 CONF = "/etc/security/limits.d/95-vstenv-realtime.conf"
 DECLINED = paths.DATA / "realtime-declined"
@@ -58,7 +58,7 @@ def can_enable(s: dict) -> bool:
 
 
 def fix(s: dict) -> str:
-    if can_enable(s): return "vstenv realtime enable (asks for your password once), or Health → Real-time audio"
+    if can_enable(s): return f"{APP_NAME} realtime enable (asks for your password once), or Health → Real-time audio"
     if s.get("rtprio") == 0 and s.get("conf"): return RELOGIN.lower()
     return ""
 
@@ -97,8 +97,11 @@ def decline():
 
 def summary(s: dict) -> tuple[bool, str]:
     n = s.get("rtprio")
-    if n == 0 and s.get("conf"): return False, f"set up, not active yet. {RELOGIN}"
+    if n == 0 and s.get("conf"):
+        return False, (f"set up, not active yet. {RELOGIN}: every session of your user must end, or restart the computer, "
+                       "because the systemd user manager keeps the old limits while any session runs")
     if n is None: return True, "not checked: the limit could not be read"
     if n > 0: return True, f"real-time priority up to {n}"
-    if s.get("rtkit"): return False, "no real-time limit; only RTKit's lower priority: small ASIO buffers may click under load"
+    # RTKit is how most desktops hand out real-time priority: not a fault, only a lower ceiling
+    if s.get("rtkit"): return True, "RTKit only: lower priority; small buffers may click"
     return False, "no real-time priority: the audio callback runs at normal priority and small ASIO buffers click"

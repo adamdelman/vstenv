@@ -17,8 +17,8 @@ class RealtimeTest(unittest.TestCase):
         self.assertEqual(s["rtprio"], 98); self.assertTrue(realtime.summary(s)[0])
         self.assertTrue(realtime.summary(self._s("rtprio=unlimited\nrtkit=0\n"))[0])
 
-    def test_no_limit_warns(self):
-        ok, why = realtime.summary(self._s("rtprio=0\nrtkit=1\n")); self.assertFalse(ok); self.assertIn("RTKit", why)
+    def test_no_limit_warns_unless_rtkit_runs(self):
+        ok, why = realtime.summary(self._s("rtprio=0\nrtkit=1\n")); self.assertTrue(ok); self.assertIn("RTKit only", why)   # the usual desktop: OK
         ok, why = realtime.summary(self._s("rtprio=0\nrtkit=0\n")); self.assertFalse(ok); self.assertIn("normal priority", why)
 
     def test_unreadable_is_not_a_failure(self):
@@ -87,6 +87,42 @@ class EnableTest(unittest.TestCase):
             self.assertFalse(realtime.should_offer())
         with mock.patch("vstenv.host.sh", return_value=_probe(rtprio=95)):
             self.assertFalse(realtime.can_enable(realtime.status()))
+
+
+
+try: from vstenv import gui
+except Exception: gui = None             # no GTK here
+
+@unittest.skipIf(gui is None, "needs GTK/libadwaita")
+class FirstLaunchOffersTest(unittest.TestCase):
+    """The realtime offer waits until the ntsync offer's dialog is closed."""
+    def offer(self, ntsync_asks):
+        win = mock.Mock(_ntsync_checked=False); then = mock.Mock(); dialogs = []
+        class Sync:                          # run the background thread inline
+            def __init__(self, target, daemon): self.t = target
+            def start(self): self.t()
+        with mock.patch.object(gui, "ui", side_effect=lambda fn, *a: fn(*a)), mock.patch.object(gui.threading, "Thread", Sync), \
+             mock.patch.object(gui.Adw, "AlertDialog", side_effect=lambda **kw: dialogs.append(mock.Mock()) or dialogs[-1]), \
+             mock.patch("vstenv.ntsync.should_offer", return_value=ntsync_asks):
+            gui.Window.offer_ntsync(win, then=then)
+        return then, dialogs, win
+
+    def test_realtime_after_the_ntsync_dialog_closes(self):
+        then, dialogs, win = self.offer(True)
+        then.assert_not_called(); self.assertEqual(len(dialogs), 1)
+        on_response = dialogs[0].connect.call_args.args[1]
+        with mock.patch("vstenv.ntsync.decline"): on_response(dialogs[0], "later")
+        then.assert_called_once()
+
+    def test_realtime_at_once_when_ntsync_is_not_offered(self):
+        then, dialogs, _ = self.offer(False)
+        then.assert_called_once(); self.assertEqual(dialogs, [])
+
+    def test_fix_names_the_app(self):
+        from vstenv import APP_NAME
+        self.assertTrue(realtime.fix({"rtprio": 0, "conf": False}).startswith(f"{APP_NAME} realtime enable"))
+        ok, why = realtime.summary({"rtprio": 0, "conf": True}); self.assertFalse(ok)
+        self.assertIn("every session", why); self.assertIn("systemd user manager", why)
 
 
 if __name__ == "__main__":

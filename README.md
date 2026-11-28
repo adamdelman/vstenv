@@ -253,7 +253,8 @@ Known problems and what to do:
 - **Clicks or dropouts at small ASIO buffer sizes:** your user needs real-time
   rights, which **Health** checks. Click **Health → Real-time audio** (or run
   `vstenv realtime enable`), enter your password, then log out and back in.
-  A buffer of 128 or more is safest.
+  If Health still says "not active yet", close every session of your user
+  (or restart the computer). A buffer of 128 or more is safest.
 - **32-bit plugins aren't supported.** Use the 64-bit version, which almost
   every current plugin has.
 

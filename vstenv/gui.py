@@ -1165,14 +1165,18 @@ class Window(Adw.ApplicationWindow):
                 d.present(self)
             ui(ask)
         threading.Thread(target=work, daemon=True).start()
-    def offer_ntsync(self):
+    def offer_ntsync(self, then=None):
         """Once per launch, in the background: offer the driver when the kernel has
-        it and nobody loaded it. A "no" is remembered."""
+        it and nobody loaded it. A "no" is remembered. then() runs once that
+        question is settled (not asked, or its dialog closed), so a second offer
+        does not open on top of this one."""
         if getattr(self, "_ntsync_checked", False): return
         self._ntsync_checked = True
         from . import ntsync
         def work():
-            if not ntsync.should_offer(): return
+            if not ntsync.should_offer():
+                if then is not None: ui(then)
+                return
             def ask():
                 d = Adw.AlertDialog(heading="Make plugins run faster?",
                                     body="Your kernel has a driver (ntsync) that lets Wine handle plugin threads without a detour, "
@@ -1181,7 +1185,11 @@ class Window(Adw.ApplicationWindow):
                                          "after a restart. Close your DAW afterwards so Wine starts with it.")
                 d.add_response("never", "Don't ask again"); d.add_response("later", "Not now"); d.add_response("enable", "Turn it on")
                 d.set_response_appearance("enable", Adw.ResponseAppearance.SUGGESTED); d.set_default_response("enable"); d.set_close_response("later")
-                d.connect("response", lambda _d, resp: self.enable_ntsync() if resp == "enable" else (ntsync.decline() if resp == "never" else None))
+                def on_response(_d, resp):
+                    if resp == "enable": self.enable_ntsync()
+                    elif resp == "never": ntsync.decline()
+                    if then is not None: then()
+                d.connect("response", on_response)
                 d.present(self)
             ui(ask)
         threading.Thread(target=work, daemon=True).start()
@@ -1234,7 +1242,7 @@ class Window(Adw.ApplicationWindow):
                      "programs": "refresh_programs", "health": "refresh_health"}
 
     def refresh_all(self):
-        if self.is_ready() and not self.busy: self.offer_ntsync(); self.offer_realtime()
+        if self.is_ready() and not self.busy: self.offer_ntsync(then=self.offer_realtime)   # one offer at a time
         self.refresh_notices()                     # cheap, and drives the header
         current = self.stack.get_visible_child_name()
         self._stale = set(self._PAGE_REFRESH) - {current}
