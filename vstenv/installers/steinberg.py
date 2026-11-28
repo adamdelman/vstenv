@@ -49,9 +49,30 @@ def _listing(f: Path) -> list[str]:
         except (OSError, subprocess.SubprocessError): return []
     return []
 
+def _read_member(f: Path, name: str) -> bytes:
+    """One file out of the archive, b"" when it cannot be read."""
+    try:
+        if f.suffix.lower() == ".zip":
+            with zipfile.ZipFile(f) as z: return z.read(name)
+        if f.suffix.lower() == ".exe" and tools.seven_zip_status()["path"]:
+            return subprocess.run([tools.seven_zip(), "e", "-so", str(f), name], capture_output=True, timeout=120).stdout
+    except (OSError, KeyError, zipfile.BadZipFile, subprocess.SubprocessError): pass
+    return b""
+
+def is_steinberg_setup(xml: bytes | str) -> bool:
+    """Steinberg's setup.xml: a <Setup> root naming at least one MSI (its
+    <product file> or an <msiPackage file>), which is what install() runs.
+    Other vendors' archives may hold a setup.xml of their own."""
+    try: root = ET.fromstring(xml)
+    except ET.ParseError: return False
+    files = [e.get("file", "") for e in (root.findall("product") + root.findall("msiPackage"))]
+    return root.tag == "Setup" and any(x.lower().endswith(".msi") for x in files)
+
 def is_package(f: Path) -> bool:
-    """A Steinberg package: an archive with `<dir>/setup.xml` in it."""
-    return any(n.lower().endswith("/setup.xml") or n.lower() == "setup.xml" for n in _listing(Path(f)))
+    """A Steinberg package: an archive with a Steinberg `<dir>/setup.xml` in it."""
+    f = Path(f)
+    return any((n.lower().endswith("/setup.xml") or n.lower() == "setup.xml") and is_steinberg_setup(_read_member(f, n))
+               for n in _listing(f))
 
 def extract(pkg: Path, dest: Path) -> Path:
     """Unpack the package; returns the folder holding setup.xml."""
