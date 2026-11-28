@@ -86,7 +86,7 @@
 +        policy = sched_getscheduler( thread->unix_tid ) & ~SCHED_RESET_ON_FORK;
 +        /* a thread made realtime by someone else (pipewire-jack's data loop) is left alone */
 +        if (!thread->rt_priority && (policy == SCHED_FIFO || policy == SCHED_RR)) return;
-+        /* priority 15 and up: time-critical, or set as an absolute priority (Cubase's audio threads) */
++        /* priority 15 and up: time-critical, or highest in the high class (Cubase's Audio Prefetch threads) */
 +        if (thread->priority >= LOW_REALTIME_PRIORITY - 1)
 +        {
 +            param.sched_priority = min( rt_limit, 70 + (effective_priority - 15) * 10 / 16 );
