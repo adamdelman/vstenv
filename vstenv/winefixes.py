@@ -22,7 +22,7 @@ the prefix needs touching.
 The DLLs land in the build, not the prefix, so everything that runs this
 Wine gets them: standalone programs and the yabridge plugin hosts alike.
 """
-import hashlib, json, os, re, shutil, tarfile, tempfile
+import hashlib, json, os, re, shutil, subprocess, tarfile, tempfile
 from datetime import date
 from pathlib import Path
 from . import paths, wine
@@ -129,6 +129,11 @@ def _locate(build, r) -> tuple[Path | None, dict | None, str, str]:
     a = next((a for a in rel.get("assets", []) if a.get("name") == name), None)
     return None, a, f"{name} ({RELEASE_REPO} release {tag})" if a else "", tag
 
+def _runs(exe: Path) -> bool:
+    """The program starts and answers --version (the rebuilt wineserver is linked against this system's libraries)."""
+    try: return subprocess.run([str(exe), "--version"], capture_output=True, timeout=10).returncode == 0
+    except (OSError, subprocess.SubprocessError): return False
+
 def install(build: wine.WineBuild, reporter=None, force=False) -> dict[str, str]:
     """Put the release's patched DLLs into the Wine build. Idempotent: nothing is
     touched when the installed set came from the latest release (or, offline, when
@@ -164,6 +169,10 @@ def install(build: wine.WineBuild, reporter=None, force=False) -> dict[str, str]
                 if dst.exists() and _sha(dst) == sha: done[name] = sha; continue
                 tmpf = dst.with_name(f".{dst.name}.new")
                 shutil.copy2(f, tmpf); tmpf.replace(dst)      # rename: a running program keeps its old mapping
+                if name.startswith("bin/") and not _runs(dst):   # a server that does not start breaks every program
+                    r.log(f"{name} from {tgz.name} does not run here; the stock one is back")
+                    if orig.exists(): shutil.copy2(orig, tmpf); tmpf.replace(dst)
+                    continue
                 done[name] = sha
         finally:   # record what did land even if a later copy failed (disk full): status() must not deny a DLL that is in place
             m = marker(build) or {}
