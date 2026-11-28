@@ -829,7 +829,11 @@ in the realtime class `FF` 75 to 80; a thread put on `FF` 83 from outside stays
 spins alternates a quarter second at `FF` 70 and a second at `TS` nice -11, while one that
 works 1 ms in 3 stays `FF` 70, also with two spinners and the server pinned to the same two CPUs;
 a program with `RLIMIT_RTPRIO` 50 under a server with 98 gets `FF` 50, one with soft 0 and hard 98 `FF` 70; under `prlimit --rtprio=0` (both for the
-server and for the client only) `TS` nice -11, no message.
+server and for the client only) `TS` nice -11, no message. `tests/test_wine_rt.py` runs these
+checks on a real Wine (`VSTENV_RT_WINE=<build root> VSTENV_RT_SERVER=<wineserver>`).
+The build script also checks that the rebuilt server lists the same requests, in
+the same order, as the pinned build's own, and the app puts the stock server back
+if the rebuilt one does not start.
 
 Measured (WineASIO on PipeWire, quantum 64, private null sinks, 30 s each; ERR is
 PipeWire's xrun count for Cubase's node, clicks and zero runs from the capture):
