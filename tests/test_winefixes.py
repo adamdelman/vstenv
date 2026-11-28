@@ -52,6 +52,21 @@ class WineFixesTest(unittest.TestCase):
                 self.assertFalse((p.path / ".update-timestamp").exists())
                 reg.update({c: {"DllPath": "x"} for c in winefixes.WINRT_CLASSES.values()}); run.reset_mock()
                 self.assertFalse(winefixes.register_classes(p)); run.assert_not_called()
+    def test_register_classes_skips_a_dll_not_installed_and_fails_while_a_class_stays_missing(self):
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d); b = _fake_build(tmp); p = wine.Prefix(tmp / "prefix", b); p.path.mkdir()
+            reg = {}; r = mock.Mock()
+            with mock.patch.object(p, "reg_query", side_effect=lambda k: reg.get(k.rsplit("\\", 1)[-1], {})), \
+                 mock.patch.object(p, "run") as run, mock.patch.object(winefixes, "has", side_effect=lambda b, n: n == "windows.globalization.dll"):
+                run.return_value = mock.Mock(returncode=0)
+                def update(*a, **k): reg["Windows.Globalization.Calendar"] = {"DllPath": "x"}; return mock.Mock(returncode=0)
+                run.side_effect = update                    # the perception DLL is not installed: its class is not asked for
+                self.assertTrue(winefixes.register_classes(p, r)); r.ok.assert_called_once(); r.fail.assert_not_called()
+                reg.clear(); run.side_effect = None; r.reset_mock()
+                run.return_value = mock.Mock(returncode=1)  # a running program held the DLL: wineboot left it out
+                self.assertTrue(winefixes.register_classes(p, r)); r.ok.assert_not_called()
+                self.assertIn("still not registered: Windows.Globalization.Calendar", r.fail.call_args.args[0])
+                self.assertIn("exited 1", r.fail.call_args.args[0])
     def test_missing_keys_are_reported_and_a_short_tarball_installs_what_it_has(self):
         with tempfile.TemporaryDirectory() as d:
             tmp = Path(d); b = _fake_build(tmp); tgz = _tarball(tmp)

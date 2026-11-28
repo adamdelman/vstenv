@@ -180,9 +180,16 @@ def register_classes(p: wine.Prefix, reporter=None) -> bool:
     """Run a prefix update when a patched DLL's WinRT class is not registered yet
     (RoGetActivationFactory fails with "class not registered" until then). Returns True if it ran."""
     r = null_reporter(reporter); r.step("WinRT classes of the patched DLLs")
-    missing = [c for dll, c in WINRT_CLASSES.items() if has(p.build, dll)
-               and not p.reg_query(rf"HKLM\Software\Microsoft\WindowsRuntime\ActivatableClassId\{c}")]
-    if not missing: r.skip(); return False
+    def missing(): return [c for dll, c in WINRT_CLASSES.items() if has(p.build, dll)
+                           and not p.reg_query(rf"HKLM\Software\Microsoft\WindowsRuntime\ActivatableClassId\{c}")]
+    before = missing()
+    if not before: r.skip(); return False
     (p.path / ".update-timestamp").unlink(missing_ok=True)
-    p.run(["wineboot", "-u"], timeout=900)
-    r.ok("registered " + ", ".join(missing)); return True
+    cp = p.run(["wineboot", "-u"], timeout=900)
+    # wineboot skips a DLL a running program has in use, and says so only in its exit code
+    left = missing()
+    if left or cp.returncode != 0:
+        r.fail(f"still not registered: {', '.join(left or before)}" + (f" (wineboot -u exited {cp.returncode})" if cp.returncode else "")
+               + "; close every Windows program and run setup again")
+    else: r.ok("registered " + ", ".join(before))
+    return True

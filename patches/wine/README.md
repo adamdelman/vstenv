@@ -372,14 +372,21 @@ ended the process (c0000409). Found with `vstenv run --debug` (`+seh`,
 The first patch adds the `Calendar` runtime class to `windows.globalization`:
 activation gives a calendar set to the current time, and `Clone`,
 `GetDateTime`, `SetDateTime`, `SetToNow`, `Compare`, `CompareDateTime` and
-`CopyTo` work; the field and string accessors are FIXME stubs. The second
-adds `SpatialLocator`'s statics to `windows.perception.stub`: `GetDefault`
-answers S_OK with no locator, as Windows does on a PC without a headset, and
-the head-tracking module then gives up quietly. Only those two DLLs are
-rebuilt. A prefix finds a WinRT class through its registry entry, which Wine
+`CopyTo` work. Not implemented: the field accessors (year to nanosecond, their
+`Add*` and `*AsString` forms, first/last/number-of), `SetToMin`/`SetToMax`,
+the calendar system, clock, language and numeral-system properties,
+`ITimeZoneOnCalendar`, and `ICalendarFactory`/`ICalendarFactory2`
+(a calendar for given languages, calendar system or clock); those are FIXME
+stubs or missing interfaces. The second adds `SpatialLocator`'s statics to
+`windows.perception.stub`: `GetDefault` answers S_OK with no locator.
+Whether Windows answers the same without a headset is not checked; what is
+checked is that Cubase's head-tracking module gives up quietly on it. Only
+those two DLLs are rebuilt. A prefix finds a WinRT class through its registry entry, which Wine
 writes during a prefix update, so setup and `vstenv wine-fixes install` run
 `wineboot -u` once when a patched DLL's class is not registered
-(`winefixes.register_classes`). Checked with Cubase 16.0.5: before, c0000409
+(`winefixes.register_classes`). wineboot skips a DLL a running program has in
+use, so the classes are looked up again afterwards and a class still missing
+is reported as a failed step. Checked with Cubase 16.0.5: before, c0000409
 right after `headtracking.dll` loaded; after, with the DLL in place, the Hub
 opens.
 Cubase 14's own `headtracking.dll` (August 2023 build, same four classes) was
