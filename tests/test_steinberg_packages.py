@@ -99,6 +99,16 @@ class PackageTest(unittest.TestCase):
                 res = pkg.install(p, z)
             self.assertEqual((res["installed"], res["failed"]), (["Cubase16.msi"], []))
             self.assertTrue(calls[0][2].endswith("Cubase16.msi"))
+    def test_include_path_from_the_package_top_before_a_search(self):
+        # an older copy elsewhere in the package must not win over the path setup.xml names
+        with tempfile.TemporaryDirectory() as tmp:
+            top = Path(tmp) / "Cubase 16"; setup_dir = top / "Additional Content/Installer Data"; setup_dir.mkdir(parents=True)
+            want = top / "Additional Content/Installer/Cubase16.msi"; want.parent.mkdir(); want.write_text("msi")
+            (top / "Old").mkdir(); (top / "Old/Cubase16.msi").write_text("old")
+            with mock.patch.object(Path, "rglob", side_effect=AssertionError("searched")):
+                self.assertEqual(pkg._find_msi(setup_dir, "Cubase16.msi", ["Additional Content/Installer"], root=Path(tmp)), want)
+            self.assertIsNone(pkg._find_msi(setup_dir, "Gone.msi", [], root=Path(tmp)))
+            self.assertEqual(pkg._find_msi(setup_dir, "Cubase16.msi", [], root=Path(tmp)).name, "Cubase16.msi")   # the search, last
     def test_staged_finds_failed_status_files_with_their_package(self):
         with tempfile.TemporaryDirectory() as tmp:
             p = Prefix(Path(tmp) / "prefix", WineBuild(Path(tmp) / "wine")); (p.drive_c / "users/me").mkdir(parents=True)
