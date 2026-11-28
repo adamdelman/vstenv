@@ -116,18 +116,8 @@ def _parse_reg_export(text: str) -> dict[str, str]:
     and hex(2):<bytes> for REG_EXPAND_SZ. Line continuations (a trailing
     backslash) are joined first, since a long path wraps."""
     vals: dict[str, str] = {}
-    joined, pending = [], ""
-    for line in text.splitlines():
-        line = pending + line.strip()
-        if line.endswith("\\"): pending = line[:-1]; continue
-        pending = ""; joined.append(line)
-    if pending: joined.append(pending)
-
-    for line in joined:
-        if not line.startswith('"') or "=" not in line: continue
-        name, _, data = line.partition("=")
-        name = name.strip()[1:-1].replace('\\"', '"').replace("\\\\", "\\")
-        data = data.strip()
+    for name, line in _reg_export_lines(text).items():
+        data = line.partition("=")[2].strip()
         if data.startswith('"'):
             vals[name] = data[1:-1].replace('\\"', '"').replace("\\\\", "\\")
         elif data.startswith("dword:"):
@@ -138,6 +128,23 @@ def _parse_reg_export(text: str) -> dict[str, str]:
                 vals[name] = raw.decode("utf-16-le").rstrip("\0")
             except ValueError: pass
     return vals
+
+def _reg_export_lines(text: str) -> dict[str, str]:
+    """Each value's line in a `reg export` file, continuations
+    joined: {name: '"name"=<data as exported>'}. Imported again, a line gives the
+    value back with its type, whatever that is."""
+    joined, pending = [], ""
+    for line in text.splitlines():
+        line = pending + line.strip()
+        if line.endswith("\\"): pending = line[:-1]; continue
+        pending = ""; joined.append(line)
+    if pending: joined.append(pending)
+    out = {}
+    for line in joined:
+        if not line.startswith('"') or "=" not in line: continue
+        name = line.partition("=")[0].strip()[1:-1].replace('\\"', '"').replace("\\\\", "\\")
+        out[name] = line
+    return out
 
 def _exe_of(cmdline: str) -> str:
     """The program name from a Wine command line.
@@ -322,25 +329,6 @@ class Prefix:
         self.run(["wineboot", "-u"], timeout=900)
         self.run(["winecfg", "/v", windows_version], timeout=120)
         self.wait_idle(force=True); r.ok(str(self.path))
-
-    NT_CURRENT_VERSION = r"HKLM\Software\Microsoft\Windows NT\CurrentVersion"
-
-    def fix_product_name(self, reporter=None):
-        """`winecfg /v win10` (and win11) writes ProductName "Microsoft Windows 10";
-        Windows 10 and 11 both say "Windows 10 <edition>", as Wine's own wine.inf
-        does ("Windows 10 Pro"). Steinberg's setup bootstrapper (Cubase 14)
-        counts Windows 10 only when ProductName starts with "Windows 10" and
-        otherwise refuses with code 241, "Your operating system is not supported".
-        Read from system.reg on the host, so a correct prefix costs no Wine call."""
-        r = null_reporter(reporter)
-        try: text = (self.path / "system.reg").read_text(encoding="utf-8", errors="replace")
-        except OSError: return
-        sec = re.search(r'^\[Software\\\\Microsoft\\\\Windows NT\\\\CurrentVersion\] .*?(?=^\[)', text, re.M | re.S)
-        m = re.search(r'^"ProductName"="Microsoft (Windows 1[01])"', sec.group(0), re.M) if sec else None
-        if not m: return
-        r.step("Windows product name")
-        self.reg_add(self.NT_CURRENT_VERSION, "ProductName", "Windows 10 Pro")   # Windows 11 also reports "Windows 10"
-        r.ok(f"was \"Microsoft {m.group(1)}\"")
 
     def wait_idle(self, timeout=120, force=False):
         """Wait for wineserver to exit so registry hives are flushed. Unless
@@ -562,14 +550,17 @@ done"""
         `reg query` prints to a pipe in the prefix's OEM code page, so its
         output is unreadable for a value holding a non-ASCII path, and its
         localized "key not found" message cannot be decoded at all."""
+        return _parse_reg_export(self.reg_export(key))
+
+    def reg_export(self, key: str) -> str:
+        """`reg export` of the key, "" when it does not exist."""
         out = self.drive_c / "vstenv-reg-query.reg"
         out.unlink(missing_ok=True)
         self.run([self.REG64, "export", key, self.to_win(out), "/y"], timeout=60)
-        if not out.exists(): return {}          # no such key
-        try: text = out.read_text(encoding="utf-16")
-        except (UnicodeError, OSError): return {}
+        if not out.exists(): return ""          # no such key
+        try: return out.read_text(encoding="utf-16")
+        except (UnicodeError, OSError): return ""
         finally: out.unlink(missing_ok=True)
-        return _parse_reg_export(text)
     def reg_import(self, reg_text: str, name="vstenv-import.reg"):
         f = self.drive_c / name
         f.write_text(reg_text, encoding="utf-8")
@@ -578,7 +569,7 @@ done"""
 
     def reg_import_values(self, values: dict[str, dict[str, tuple[str, str]]], name="vstenv-values.reg") -> int:
         """Write many values in one regedit call. values: {'HKLM\\Software\\X': {'Name': ('REG_SZ'|'REG_DWORD'|'REG_EXPAND_SZ', data)}};
-        a kind of None deletes the value."""
+        a kind of None deletes the value; "raw" writes data, a line from reg export, as it is."""
         def esc(v): return v.replace("\\", "\\\\").replace('"', '\\"')
         lines = ["Windows Registry Editor Version 5.00", ""]
         for key, vals in values.items():
@@ -587,6 +578,7 @@ done"""
             lines.append(f"[{root}\\{rest}]")
             for n, (kind, data) in vals.items():
                 if kind is None: lines.append(f'"{esc(n)}"=-')
+                elif kind == "raw": lines.append(data)
                 elif kind == "REG_DWORD": lines.append(f'"{esc(n)}"=dword:{int(data):08x}')
                 elif kind == "REG_EXPAND_SZ":
                     hexs = ",".join(f"{b:02x}" for b in (str(data) + "\0").encode("utf-16-le")); lines.append(f'"{esc(n)}"=hex(2):{hexs}')

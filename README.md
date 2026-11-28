@@ -232,8 +232,11 @@ flatpak run --command=vstenv io.github.dguedry.vstenv report
 It writes `vstenv-report-<date>-<time>.tar.gz` to your home folder.
 [Open an issue](https://github.com/dguedry/vstenv/issues) and attach it. The
 report has the app's logs and the last debug run's logs, with serial numbers,
-licence tokens and your home folder path removed. It also has a list of
-Cubase's crash dumps and the newest dump file. That file is included unchanged.
+licence tokens and your home folder path removed, and a list of Cubase's crash
+dumps. The dump files themselves are left out: a dump is a copy of the
+program's memory and may hold your user name and anything it had open. If a
+developer asks for one, add `--with-crash-dump` to the `report` command; the
+newest dump is then included unchanged.
 
 Known problems and what to do:
 

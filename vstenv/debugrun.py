@@ -17,10 +17,10 @@ into one directory, paths.LOGS/debug-<program>-<time>/:
 """
 from __future__ import annotations
 
-import hashlib, os, platform, subprocess, time
+import hashlib, json, os, platform, signal, subprocess, sys, time
 from pathlib import Path
 
-from . import host, paths
+from . import host, paths, wine
 
 # Every topic: +seh logs each exception with code and address (the crash, and what
 # led to it); +loaddll one line per DLL, native or builtin; warn+module why a DLL or
@@ -58,6 +58,11 @@ def debug_dir(name: str, now: float | None = None) -> Path:
     safe = "".join(c if c.isalnum() or c in "-_." else "-" for c in name).strip("-.") or "program"
     return paths.LOGS / f"debug-{safe}-{time.strftime('%Y%m%d-%H%M%S', time.localtime(now))}"
 
+def _last_write(d: Path) -> float:
+    """When anything in d was last written (a running session's wine.log grows
+    without touching the directory's own mtime)."""
+    return max((f.stat().st_mtime for f in d.iterdir() if f.is_file()), default=d.stat().st_mtime)
+
 def newest_dir() -> Path | None:
     ds = [d for d in paths.LOGS.glob("debug-*") if d.is_dir()] if paths.LOGS.is_dir() else []
     return max(ds, key=lambda d: d.stat().st_mtime, default=None)
@@ -71,18 +76,50 @@ CRASH_HANDLER = {
     r"HKCU\Software\Wine\WineDbg": {"ShowCrashDialog": ("REG_DWORD", "0")},
 }
 
-def set_crash_handler(p) -> dict:
-    """Turn the crash handler on; returns what was there, for restore_crash_handler."""
+SAVED = "crash-handler.json"    # in the debug directory while the handler is on
+
+def set_crash_handler(p, d: Path | None = None) -> dict:
+    """Turn the crash handler on; returns what was there, for restore_crash_handler.
+    Each value is kept as the line `reg export` wrote, so it comes back with its
+    own type. With d, that is written to d/crash-handler.json first, so a session
+    that dies before restoring is put right by restore_leftover."""
     saved = {}
     for key, vals in CRASH_HANDLER.items():
-        old = p.reg_query(key)
-        saved[key] = {n: (kind, old[n]) if n in old else (None, "") for n, (kind, _) in vals.items()}
+        old = wine._reg_export_lines(p.reg_export(key))
+        saved[key] = {n: ("raw", old[n]) if n in old else (None, "") for n in vals}
+    if d is not None: (d / SAVED).write_text(json.dumps({"pid": os.getpid(), "saved": saved}))
     p.reg_import_values(CRASH_HANDLER, name="vstenv-debug-on.reg")
     return saved
 
-def restore_crash_handler(p, saved: dict):
-    """Put the values back; a value that did not exist before is deleted."""
-    p.reg_import_values(saved, name="vstenv-debug-off.reg")
+def restore_crash_handler(p, saved: dict, d: Path | None = None) -> bool:
+    """Put the values back; a value that did not exist before is deleted. False
+    (and d/crash-handler.json kept for the next try) when regedit failed."""
+    rc = p.reg_import_values({k: {n: tuple(v) for n, v in vals.items()} for k, vals in saved.items()}, name="vstenv-debug-off.reg")
+    if rc != 0:
+        print(f"warning: could not restore Wine's crash handler settings (regedit exit {rc}); "
+              "the next run --debug, doctor or report tries again", file=sys.stderr)
+        return False
+    if d is not None: (d / SAVED).unlink(missing_ok=True)
+    return True
+
+def restore_leftover(p) -> int:
+    """Restore the crash handler a debug session left on (vstenv killed, the
+    machine off). Newest first, so the oldest, the real originals, end up in
+    place. Skips a session still running. Returns how many were restored."""
+    n = 0
+    files = sorted(paths.LOGS.glob(f"debug-*/{SAVED}"), key=lambda f: f.stat().st_mtime, reverse=True) if paths.LOGS.is_dir() else []
+    for f in files:
+        try: data = json.loads(f.read_text())
+        except (OSError, ValueError): continue
+        if data.get("pid") != os.getpid() and _alive(data.get("pid")): continue
+        n += restore_crash_handler(p, data.get("saved", {}), f.parent)
+    return n
+
+def _alive(pid) -> bool:
+    try: os.kill(int(pid), 0)
+    except (TypeError, ValueError, ProcessLookupError): return False
+    except PermissionError: pass
+    return True
 
 # Runs on the host, where Wine's processes are (the sandbox's /proc shows only the
 # sandbox). Finds the program by its name (Wine sets comm to the exe's name, cut
@@ -92,12 +129,15 @@ def restore_crash_handler(p, saved: dict):
 # with the thread's total and its scheduling (FIFO:70 is realtime priority 70,
 # OTHER:0 normal at nice 0). The stat fields are counted after "(comm) ", which may
 # hold spaces: utime, stime (14, 15), nice (19), rt_priority and policy (40, 41)
-# are then $12, $13, $17, $38 and $39.
-SAMPLER = r"""pid= prev=
-while :; do
+# are then $12, $13, $17, $38 and $39. It also stops when the process that started
+# it is gone (vstenv killed; under Flatpak that is the session helper, which stays)
+# or the program has not appeared within 10 minutes (200 rounds).
+SAMPLER = r"""pid= prev= waited=0
+while kill -0 "$PPID" 2>/dev/null; do
   state=$(sed 's/.*) //' "/proc/$pid/stat" 2>/dev/null | cut -c1)     # gone, or a zombie (Z): ended
   if [ -z "$pid" ] || [ -z "$state" ] || [ "$state" = Z ]; then
     [ -n "$pid" ] && exit 0
+    waited=$((waited + 1)); [ "$waited" -gt "${VSTENV_WAIT_ROUNDS:-200}" ] && exit 0
     for p in /proc/[0-9]*; do
       [ "$(cat "$p/comm" 2>/dev/null)" = "$VSTENV_COMM" ] || continue
       tr '\0' '\n' < "$p/environ" 2>/dev/null | grep -qxF -- "WINEPREFIX=$VSTENV_PREFIX" && { pid=${p#/proc/}; break; }
@@ -164,37 +204,52 @@ def sysinfo(p, topic: str) -> str:
     add("DXVK_CONFIG", lambda: f"{os.environ['DXVK_CONFIG']} (yours)" if "DXVK_CONFIG" in os.environ else p.wine_env().get("DXVK_CONFIG"))
     return "\n".join(lines) + "\n"
 
+def _end_on_signal(sig, _frame):
+    raise SystemExit(128 + sig)         # unwinds through run's finally, which restores
+
 def run(p, prog, topic="crash", reporter=None) -> Path:
     """Run `prog` with debug logging until it exits; returns the debug directory."""
     from . import programs
     exe = prog.exe.rsplit("\\", 1)[-1] if prog.exe else ""
     # a second launch hands over to the running copy, which has none of the logging
     if exe and p.is_running(exe): raise RuntimeError(f"{prog.name} is already running: close it, then start the debug run again")
+    restore_leftover(p)
     d = debug_dir(prog.name); d.mkdir(parents=True, exist_ok=True)
     (d / "sysinfo.txt").write_text(sysinfo(p, topic))
-    saved = set_crash_handler(p)
-    p.debug = (d / "wine.log", debug_env(topic, d))
+    old_handlers = {}
+    try:                                # a closed terminal (SIGHUP) or a kill (SIGTERM) still restores
+        for sig in (signal.SIGTERM, signal.SIGHUP): old_handlers[sig] = signal.signal(sig, _end_on_signal)
+    except ValueError: pass             # not the main thread
     sampler = None
     try:
-        proc = programs.run(p, prog, reporter)
-        if exe: sampler = start_sampler(p, exe, d / "threads.log")
-        # shortcut: waits for the process started, not for programs it hands off
-        # to; a launcher that exits at once ends the debug session early.
-        try: proc.wait()
-        except KeyboardInterrupt: pass          # the user ends the session; the program runs on
+        saved = set_crash_handler(p, d)
+        p.debug = (d / "wine.log", debug_env(topic, d))
+        try:
+            proc = programs.run(p, prog, reporter)
+            if exe: sampler = start_sampler(p, exe, d / "threads.log")
+            # shortcut: waits for the process started, not for programs it hands off
+            # to; a launcher that exits at once ends the debug session early.
+            try: proc.wait()
+            except KeyboardInterrupt: pass          # the user ends the session; the program runs on
+        finally:
+            p.debug = None
+            if sampler is not None: sampler.terminate()
+            restore_crash_handler(p, saved, d)
     finally:
-        p.debug = None
-        if sampler is not None: sampler.terminate()
-        restore_crash_handler(p, saved)
+        for sig, h in old_handlers.items(): signal.signal(sig, h)
     return d
 
-def hang_dump(p) -> Path:
+def hang_dump(p, now: float | None = None) -> Path:
     """Every thread's stack in every process of the prefix, while it hangs, into
-    the newest debug directory. winedbg attaches, prints and detaches each process
-    in turn: the program keeps running."""
-    d = newest_dir()
-    if d is None: d = debug_dir("hang"); d.mkdir(parents=True, exist_ok=True)
-    out = d / f"backtrace-{time.strftime('%H%M%S')}.txt"
-    cp = p.run(["winedbg", "--command", "bt all"], timeout=600)
-    out.write_text((cp.stdout or "") + (cp.stderr or ""))
+    the newest debug directory (a new one when that is over an hour old, so it
+    does not land in last week's run). winedbg attaches, prints and detaches each
+    process in turn: the program keeps running."""
+    d = newest_dir(); now = time.time() if now is None else now
+    if d is None or now - _last_write(d) > 3600: d = debug_dir("hang", now); d.mkdir(parents=True, exist_ok=True)
+    out = d / f"backtrace-{time.strftime('%H%M%S', time.localtime(now))}.txt"
+    try:
+        cp = p.run(["winedbg", "--command", "bt all"], timeout=600); text = (cp.stdout or "") + (cp.stderr or "")
+    except subprocess.TimeoutExpired as e:   # what it wrote before stalling is still the answer
+        text = "".join(x.decode(errors="replace") if isinstance(x, bytes) else x for x in (e.stdout, e.stderr) if x) + "\n(winedbg timed out)\n"
+    out.write_text(text)
     return out

@@ -491,9 +491,12 @@ def cmd_report(a):
     from . import report
     b = wine.installed_build(); p = wine.Prefix(paths.PREFIX, b) if b else None
     if a.summary_only: print(report.summary(p)); return
-    dest = report.write_bundle(Path(a.output) if a.output else None, p)
-    print(f"wrote {dest}\nIt contains a summary, this app's logs and the last debug run's logs, with serials, licence tokens and your home directory removed;"
-          " and Cubase's newest crash dump, if there is one, as it is.")
+    dest = report.write_bundle(Path(a.output) if a.output else None, p, crash_dump=a.with_crash_dump)
+    print(f"wrote {dest}\nIt contains a summary, this app's logs and the last debug run's logs, with serials, licence tokens and your home directory removed.")
+    if a.with_crash_dump:
+        print("It also contains Cubase's newest crash dump, if there is one, as it is: a dump is a copy of the program's memory\n"
+              "and may hold your user name, file paths and anything else the program had open. Nothing in it is removed.")
+    else: print(f"Crash dumps are not included; if Cubase crashed, {APP_NAME} report --with-crash-dump adds its newest one (it may hold your user name and memory contents).")
 
 def cmd_rescue(a):
     p = _prefix(); r = ConsoleReporter(); res = []
@@ -570,7 +573,8 @@ def main(argv=None):
     s.add_argument("action", nargs="?", default="install", choices=["install", "remove", "status"]); s.add_argument("--force", action="store_true"); s.set_defaults(f=cmd_dxvk)
     sp.add_parser("prefixes", help="which vstenv prefixes exist, who owns a vendor daemon, what yabridge points at").set_defaults(f=cmd_prefixes)
     s = sp.add_parser("url-handlers", help="desktop handlers for the vendors' sign-in callback links"); s.add_argument("action", nargs="?", default="register", choices=["register", "unregister", "status"]); s.set_defaults(f=cmd_url_handlers)
-    s = sp.add_parser("report", help="write a diagnostic bundle to send with a bug report"); s.add_argument("-o", "--output"); s.add_argument("--summary-only", action="store_true"); s.set_defaults(f=cmd_report)
+    s = sp.add_parser("report", help="write a diagnostic bundle to send with a bug report"); s.add_argument("-o", "--output"); s.add_argument("--summary-only", action="store_true")
+    s.add_argument("--with-crash-dump", action="store_true", help="also add Cubase's newest crash dump, unredacted: it is a copy of the program's memory and may hold your user name"); s.set_defaults(f=cmd_report)
     s = sp.add_parser("ntsync", help="Wine's fast thread synchronization (kernel ntsync driver): show it, or turn it on"); s.add_argument("action", nargs="?", default="status", choices=["status", "enable"]); s.set_defaults(f=cmd_ntsync)
     s = sp.add_parser("realtime", help="real-time priority for audio (fewer clicks at small ASIO buffers): show it, or give your user the right (password prompt, then log out and in)"); s.add_argument("action", nargs="?", default="status", choices=["status", "enable"]); s.set_defaults(f=cmd_realtime)
     s = sp.add_parser("wedge", help="DirectComposition programs all hang windowless: show it, or restart the Wine session"); s.add_argument("action", nargs="?", default="status", choices=["status", "clear"]); s.set_defaults(f=cmd_wedge)

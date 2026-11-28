@@ -11,7 +11,7 @@ the report either.
 """
 from __future__ import annotations
 
-import io, json, os, platform, re, subprocess, tarfile, time
+import getpass, io, json, os, platform, re, subprocess, tarfile, time
 from pathlib import Path
 
 from . import APP_NAME, paths, wine, host
@@ -26,13 +26,22 @@ def scrub(text: str) -> str:
     """Remove the identifying things vendors' software writes into its logs."""
     home = Path.home()
     text = text.replace(str(home), "~")
-    # Wine's own forms of it: Z:\home\<user> and the prefix's C:\users\<user>,
-    # with backslashes doubled where a debug channel escapes them.
-    sep = r"[\\/]+"
-    text = re.sub(r"(?i)z:" + sep + sep.join(map(re.escape, home.parts[1:])) + r"(?![\w.-])", "~", text)
-    text = re.sub(r"(?i)(" + sep + r"users" + sep + r")" + re.escape(home.name) + r"(?![\w.-])", r"\1<user>", text)
+    # Wine's own forms of it: Z:\home\<user>, \??\unix\home\<user> and any other
+    # separator form, and the prefix's C:\users\<user> (the login name, which
+    # may differ from the home directory's), with backslashes doubled where a
+    # debug channel escapes them.
+    sep = r"[\\/]+"; end = r"(?![\w.-])"
+    homes = sep + sep.join(map(re.escape, home.parts[1:])) + end
+    text = re.sub(r"(?i)z:" + homes, "~", text)
+    text = re.sub(r"(?i)" + homes, "~", text)
+    for user in {home.name, _login()} - {""}:
+        text = re.sub(r"(?i)(" + sep + r"users" + sep + r")" + re.escape(user) + end, r"\1<user>", text)
     for rx, sub in REDACT: text = rx.sub(sub, text)
     return text
+
+def _login() -> str:
+    try: return getpass.getuser()
+    except Exception: return ""
 
 def summary(p: wine.Prefix | None = None) -> str:
     """The human-readable part: what this machine is and what state the app is in."""
@@ -121,10 +130,15 @@ def tail(f: Path, n: int) -> str:
         fh.seek(max(0, fh.seek(0, 2) - n - 4096))
         return scrub(fh.read().decode(errors="replace"))[-n:]
 
-def write_bundle(dest: Path | None = None, p: wine.Prefix | None = None) -> Path:
-    """Write summary + logs to a .tar.gz the user can attach to a bug report."""
-    from . import vendors
+def write_bundle(dest: Path | None = None, p: wine.Prefix | None = None, crash_dump=False) -> Path:
+    """Write summary + logs to a .tar.gz the user can attach to a bug report.
+    crash_dump adds Cubase's newest minidump, which cannot be scrubbed: the
+    user asks for it explicitly."""
+    from . import vendors, debugrun
     paths.ensure_dirs()
+    if p is not None and p.exists:
+        try: debugrun.restore_leftover(p)
+        except Exception: pass
     dest = Path(dest) if dest else Path.home() / f"{APP_NAME}-report-{time.strftime('%Y%m%d-%H%M%S')}.tar.gz"
     text = summary(p)
     def add(t, name, body: str | bytes):
@@ -135,7 +149,6 @@ def write_bundle(dest: Path | None = None, p: wine.Prefix | None = None) -> Path
             if not log.is_file(): continue
             try: add(t, f"report/logs/{log.name}", tail(log, 400_000))
             except OSError: continue
-        from . import debugrun
         if (d := debugrun.newest_dir()) is not None:                               # the last `run --debug`
             for f in sorted(d.iterdir()):
                 if f.is_file():
@@ -149,7 +162,7 @@ def write_bundle(dest: Path | None = None, p: wine.Prefix | None = None) -> Path
                         except OSError: pass
             try: dumps = sorted((f for f in (p.user_dir / CRASH_DUMPS).glob("*.dmp") if f.is_file()), key=lambda f: f.stat().st_mtime)
             except OSError: dumps = []
-            if dumps:                          # a minidump is binary: sent as it is, the newest only
+            if dumps:                          # a minidump is binary memory: only on request, the newest only
                 add(t, "report/crashdumps.txt", "".join(f"{f.stat().st_size:>12}  {f.name}\n" for f in dumps))
-                if 0 < dumps[-1].stat().st_size < DUMP_MAX: add(t, f"report/crashdumps/{dumps[-1].name}", dumps[-1].read_bytes())
+                if crash_dump and 0 < dumps[-1].stat().st_size < DUMP_MAX: add(t, f"report/crashdumps/{dumps[-1].name}", dumps[-1].read_bytes())
     return dest

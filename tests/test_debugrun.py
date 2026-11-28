@@ -5,13 +5,22 @@ from vstenv import cli, debugrun, paths, programs, report, wine
 
 class FakePrefix:
     """Registry as a dict; reg_import_values applies what the .reg file would."""
-    def __init__(self, reg, path=Path("/pfx"), running=()): self.reg = reg; self.debug = None; self.path = path; self.running = running
+    def __init__(self, reg, path=Path("/pfx"), running=()):
+        self.reg = reg; self.debug = None; self.path = path; self.running = running
+        self.rc = 0
     def is_running(self, exe): return exe in self.running
     def reg_query(self, key): return dict(self.reg.get(key, {}))
+    def reg_export(self, key):      # values stored as their exported line, or plain strings (REG_SZ)
+        if key not in self.reg: return ""
+        return "\r\n".join(["Windows Registry Editor Version 5.00", "", f"[{key}]",
+                             *(v if v.startswith('"') else f'"{n}"="{v}"' for n, v in self.reg[key].items())]) + "\r\n"
     def reg_import_values(self, values, name=""):
+        if self.rc: return self.rc
         for key, vals in values.items():
             for n, (kind, data) in vals.items():
                 if kind is None: self.reg.get(key, {}).pop(n, None)
+                elif kind == "raw":       # a REG_SZ line back to its string, other types kept as their line
+                    self.reg.setdefault(key, {})[n] = wine._parse_reg_export(data)[n] if data.partition("=")[2].startswith('"') else data
                 else: self.reg.setdefault(key, {})[n] = str(data)
         return 0
 
@@ -59,6 +68,41 @@ class DebugRunTest(unittest.TestCase):
         debugrun.restore_crash_handler(p, saved)
         self.assertEqual(p.reg[key], {"Debugger": "mydbg %ld", "Other": "x"})   # Auto, absent before, is gone again
         self.assertEqual(p.reg[WINEDBG], {})
+
+    def test_restore_keeps_the_original_type(self):
+        key = rf"HKLM\Software\{debugrun.AEDEBUG}"
+        expand = '"Debugger"=hex(2):6d,00,79,00,00,00'; binary = '"Auto"=hex:01,02'
+        p = FakePrefix({key: {"Debugger": expand, "Auto": binary}})
+        saved = debugrun.set_crash_handler(p)
+        self.assertEqual(p.reg[key], {"Debugger": "winedbg --auto %ld %ld", "Auto": "1"})
+        debugrun.restore_crash_handler(p, saved)
+        self.assertEqual(p.reg[key], {"Debugger": expand, "Auto": binary})   # the exported lines, re-imported as they were
+
+    def test_saved_to_the_debug_dir_first_and_a_leftover_restored(self):
+        key = rf"HKLM\Software\{debugrun.AEDEBUG}"
+        p = FakePrefix({key: {"Debugger": "mydbg %ld"}}); d = self.d / "debug-x-1"; d.mkdir()
+        debugrun.set_crash_handler(p, d)                       # ...and the session dies here
+        self.assertTrue((d / debugrun.SAVED).exists())
+        with mock.patch.object(debugrun, "_alive", return_value=True), mock.patch.object(debugrun.os, "getpid", return_value=1):
+            self.assertEqual(debugrun.restore_leftover(p), 0)   # its session still runs: left alone
+        self.assertEqual(debugrun.restore_leftover(p), 1)
+        self.assertEqual(p.reg[key], {"Debugger": "mydbg %ld"}); self.assertEqual(p.reg[WINEDBG], {})
+        self.assertFalse((d / debugrun.SAVED).exists())
+
+    def test_failed_restore_keeps_the_file_and_warns(self):
+        p = FakePrefix({}); d = self.d / "debug-x-1"; d.mkdir()
+        saved = debugrun.set_crash_handler(p, d); p.rc = 1
+        with mock.patch("sys.stderr") as err: self.assertFalse(debugrun.restore_crash_handler(p, saved, d))
+        self.assertTrue((d / debugrun.SAVED).exists()); self.assertIn("could not restore", "".join(c.args[0] for c in err.write.call_args_list))
+
+    def test_sigterm_during_the_run_restores(self):
+        import signal
+        p = FakePrefix({}); prog = mock.Mock(exe=""); prog.name = "x"
+        def killed(): os.kill(os.getpid(), signal.SIGTERM); time.sleep(5)
+        with mock.patch.object(programs, "run", return_value=mock.Mock(wait=killed)), mock.patch.object(debugrun, "sysinfo", return_value=""):
+            with self.assertRaises(SystemExit): debugrun.run(p, prog)
+        self.assertEqual(p.reg[WINEDBG], {}); self.assertEqual(list(self.d.glob(f"*/{debugrun.SAVED}")), [])
+        self.assertIs(signal.getsignal(signal.SIGTERM), signal.SIG_DFL)
 
     def test_run_holds_env_and_handler_until_exit_then_restores(self):
         p = FakePrefix({}); seen = {}
@@ -129,6 +173,21 @@ class DebugRunTest(unittest.TestCase):
         self.assertEqual(f.parent, new); self.assertIn("Backtracing", f.read_text())
         self.assertEqual(p.run.call_args.args[0], ["winedbg", "--command", "bt all"])
 
+    def test_hang_dump_starts_a_new_dir_when_the_newest_is_old(self):
+        old = self.d / "debug-a-1"; old.mkdir(); (old / "wine.log").write_text("x"); os.utime(old / "wine.log", (1, 1)); os.utime(old, (1, 1))
+        p = mock.Mock(); p.run.side_effect = subprocess.TimeoutExpired("winedbg", 600, output="Backtracing for thread 0034\n")
+        f = debugrun.hang_dump(p, now=10_000)
+        self.assertTrue(f.parent.name.startswith("debug-hang-")); self.assertNotEqual(f.parent, old)
+        self.assertIn("Backtracing", f.read_text()); self.assertIn("timed out", f.read_text())
+        live = self.d / "debug-b-2"; live.mkdir(); os.utime(live, (1, 1)); (live / "wine.log").write_text("x")   # a session still writing
+        self.assertEqual(debugrun.hang_dump(mock.Mock(**{"run.return_value": mock.Mock(stdout="", stderr="")})).parent, live)
+
+    def test_sampler_gives_up_when_the_program_never_appears(self):
+        s = debugrun.host.popen(["sh", "-c", debugrun.SAMPLER], env={"VSTENV_PREFIX": "/nope", "VSTENV_COMM": "no-such-prog",
+                                "VSTENV_OUT": str(self.d / "t.log"), "VSTENV_WAIT_ROUNDS": "0"})
+        try: self.assertEqual(s.wait(20), 0)
+        finally: s.kill()
+
     def test_sysinfo_degrades(self):
         p = mock.Mock(); p.build.version.side_effect = OSError; p.wine_env.return_value = {"WINEFSYNC": "1"}
         with mock.patch.object(debugrun.host, "sh", return_value=""), mock.patch("vstenv.ntsync.status", return_value={"usable": True}), \
@@ -182,13 +241,23 @@ class ReportDebugLogsTest(unittest.TestCase):
         self.assertNotIn(home.name, body.replace("<user>", ""))
         self.assertIn("users\\\\<user>", body); self.assertIn("<serial>", body); self.assertIn("~\\y", body)
 
+    def test_scrub_wine_forms(self):
+        home = Path.home(); h = "\\".join(home.parts[1:])
+        with mock.patch.object(report, "_login", return_value="loginname"):
+            out = report.scrub(f"\\??\\unix\\{h}\\a /{'//'.join(home.parts[1:])}/b C:\\users\\loginname\\c C:\\users\\loginnamex")
+        self.assertNotIn(home.name, out.replace("<user>", "")); self.assertIn("\\??\\unix~\\a", out)
+        self.assertIn("users\\<user>\\c", out); self.assertIn("loginnamex", out)
+
     def test_steinberg_crash_dumps(self):
         pfx = self.d / "pfx"; dumps = pfx / "u" / report.CRASH_DUMPS; dumps.mkdir(parents=True)
         (dumps / "Cubase 1.dmp").write_bytes(b"MDMP old"); os.utime(dumps / "Cubase 1.dmp", (1, 1))
         (dumps / "Cubase 2.dmp").write_bytes(b"MDMP\x00new")
         p = mock.Mock(exists=True, user_dir=pfx / "u")
-        with mock.patch("vstenv.vendors.all", return_value=[]):
-            dest = report.write_bundle(self.d / "r.tar.gz", p)
+        with mock.patch("vstenv.vendors.all", return_value=[]), mock.patch("vstenv.debugrun.restore_leftover"):
+            plain = report.write_bundle(self.d / "plain.tar.gz", p)
+            dest = report.write_bundle(self.d / "r.tar.gz", p, crash_dump=True)
+        with tarfile.open(plain) as t:             # not without asking: a dump is memory, unscrubbed
+            self.assertIn("report/crashdumps.txt", t.getnames()); self.assertFalse([n for n in t.getnames() if n.endswith(".dmp")])
         with tarfile.open(dest) as t:
             listing = t.extractfile("report/crashdumps.txt").read().decode()
             self.assertEqual(t.extractfile("report/crashdumps/Cubase 2.dmp").read(), b"MDMP\x00new")

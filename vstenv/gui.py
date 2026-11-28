@@ -1104,7 +1104,7 @@ class Window(Adw.ApplicationWindow):
                    lambda: self.run_bg("Registering the sign-in handlers", lambda rep: __import__(f"{APP_NAME}.urlschemes", fromlist=["x"]).register_all(self.prefix, rep))))
         page.add(g)
         g = Adw.PreferencesGroup(title="Reporting a problem", description="If a check above cannot be fixed, send this with your report.")
-        g.add(_row("Save a diagnostic report", "Writes a file to your home folder: this app's state and logs, with serials, licence tokens and your home path removed.", "document-save-symbolic", self.save_report))
+        g.add(_row("Save a diagnostic report", "Writes a file to your home folder: this app's state and logs, with serials, licence tokens and your home path removed. Crash dumps are not included.", "document-save-symbolic", self.save_report))
         page.add(g); return page
     def sync_asio(self):
         """Show the driver's real state on the switch, without the switch acting on it."""
