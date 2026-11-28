@@ -326,7 +326,7 @@ def cmd_run(a):
     if v is None or not v.is_manager_program(prog): v = None
     if a.wait:
         proc.wait()
-        if v is not None: v.finish_installs(p, r, since=t0)   # as `manager launch --wait` and the GUI do
+        _finish_installs(v, p, r, t0)                   # as `manager launch --wait` and the GUI do
         setup.after_change(p, r)                        # the program may have installed plugins
     elif getattr(proc, "vstenv_watch", None) is not None:
         proc.vstenv_watch.join()     # the vendor is observing the program (e.g. rescuing
@@ -341,8 +341,15 @@ def cmd_run(a):
         # A vendor manager started this way (the Download Assistant) leaves the
         # installs it could not finish under Wine (MediaBay's untrusted prerun
         # script) staged; finish them now it is closed.
-        if v is not None: v.finish_installs(p, r, since=t0)
+        _finish_installs(v, p, r, t0)
         setup.after_change(p, r)
+
+def _finish_installs(v, p, r, since):
+    """The vendor's staged installs, after its manager closed. A failure is
+    reported, not raised: the plugin sync after it must still run."""
+    if v is None: return
+    try: v.finish_installs(p, r, since=since)
+    except Exception as e: print(f"  could not finish {v.name}'s staged installs: {e}", file=sys.stderr)
 
 def _run_debug(p, prog, topic, r):
     from . import debugrun
