@@ -34,6 +34,54 @@ class HostRunnerTest(unittest.TestCase):
             if old is None: os.environ.pop("ELECTRON_RUN_AS_NODE", None)
             else: os.environ["ELECTRON_RUN_AS_NODE"] = old
 
+    def _wrap_with(self, environ: dict) -> list[str]:
+        from unittest import mock
+        host.FLATPAK_INFO = Path("/etc/hostname")
+        with mock.patch.dict("os.environ", environ, clear=True):
+            return host.wrap(["/w/bin/wine"], {"WINEPREFIX": "/p"})
+
+    def test_display_and_audio_routing_forwarded(self):
+        argv = self._wrap_with({"DISPLAY": ":78", "WAYLAND_DISPLAY": "wayland-1",
+                                "WINEASIO_CONNECT_TO_HARDWARE": "off", "WINEASIO_NUMBER_INPUTS": "2",
+                                "PULSE_SINK": "null", "PULSE_SOURCE": "mic", "PIPEWIRE_REMOTE": "pw-0",
+                                "PIPEWIRE_NODE": "42", "PIPEWIRE_LATENCY": "256/48000",
+                                "JACK_DEFAULT_SERVER": "j", "HOME": "/home/x"})
+        for kv in ("DISPLAY=:78", "WAYLAND_DISPLAY=wayland-1", "WINEASIO_CONNECT_TO_HARDWARE=off",
+                   "WINEASIO_NUMBER_INPUTS=2", "PULSE_SINK=null", "PULSE_SOURCE=mic", "PIPEWIRE_REMOTE=pw-0",
+                   "PIPEWIRE_NODE=42", "PIPEWIRE_LATENCY=256/48000", "JACK_DEFAULT_SERVER=j"):
+            self.assertIn(f"--env={kv}", argv)
+        self.assertNotIn("--env=HOME=/home/x", argv)       # the host session keeps everything else
+        self.assertNotIn("--unset-env=DISPLAY", argv); self.assertNotIn("--unset-env=WAYLAND_DISPLAY", argv)
+
+    def test_display_absent_in_sandbox_is_unset_on_host(self):
+        argv = self._wrap_with({"DISPLAY": ":78"})
+        self.assertIn("--unset-env=WAYLAND_DISPLAY", argv); self.assertNotIn("--unset-env=DISPLAY", argv)
+        argv = self._wrap_with({})
+        self.assertIn("--unset-env=WAYLAND_DISPLAY", argv); self.assertIn("--unset-env=DISPLAY", argv)
+        self.assertLess(argv.index("--unset-env=DISPLAY"), argv.index("--"))
+
+    def test_sandbox_only_paths_not_forwarded(self):
+        argv = self._wrap_with({"DISPLAY": ":1", "XAUTHORITY": "/run/flatpak/Xauthority",
+                                "PULSE_SERVER": "unix:/run/flatpak/pulse/native"})
+        self.assertFalse([a for a in argv if "XAUTHORITY" in a or "PULSE_SERVER" in a])
+        argv = self._wrap_with({"DISPLAY": ":1", "XAUTHORITY": "/run/user/1000/xauth_x"})
+        self.assertIn("--env=XAUTHORITY=/run/user/1000/xauth_x", argv)
+
+    def test_caller_env_wins_over_forwarded(self):
+        from unittest import mock
+        host.FLATPAK_INFO = Path("/etc/hostname")
+        with mock.patch.dict("os.environ", {"WINEASIO_X": "a"}, clear=True):
+            argv = host.wrap(["/w/bin/wine"], {"WINEASIO_X": "b"})
+        self.assertIn("--env=WINEASIO_X=b", argv); self.assertNotIn("--env=WINEASIO_X=a", argv)
+
+    def test_outside_flatpak_inherits_environment(self):
+        from unittest import mock
+        host.FLATPAK_INFO = Path("/nonexistent/.flatpak-info")
+        with mock.patch.dict("os.environ", {"DISPLAY": ":78", "WINEASIO_CONNECT_TO_HARDWARE": "off"}, clear=True):
+            self.assertEqual(host.wrap(["/w/bin/wine"], {"WINEPREFIX": "/p"}), ["/w/bin/wine"])
+            e = host._kw({"WINEPREFIX": "/p"}, None, {})["env"]
+        self.assertEqual(e, {"DISPLAY": ":78", "WINEASIO_CONNECT_TO_HARDWARE": "off", "WINEPREFIX": "/p"})
+
     def test_wine_env_is_only_wines_variables(self):
         p = Prefix(Path("/p"), WineBuild(Path("/w")))
         e = p.wine_env({"WINEDEBUG": "+seh"})

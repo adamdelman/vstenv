@@ -19,6 +19,15 @@ FLATPAK_INFO = Path("/.flatpak-info")
 # Variables that must never reach a Wine program. VS Code exports the first in its
 # terminals; an Electron app started with it runs as plain Node and exits at once.
 UNSET = ("ELECTRON_RUN_AS_NODE",)
+# The sandbox's display and audio routing, passed on so host Wine opens its
+# windows and connects its audio where vstenv itself was pointed (e.g.
+# `flatpak run --env=DISPLAY=:77`), not where the host session points.
+FORWARD = ("DISPLAY", "WAYLAND_DISPLAY", "XAUTHORITY", "PULSE_SINK", "PULSE_SOURCE",
+           "PULSE_SERVER", "PIPEWIRE_REMOTE", "PIPEWIRE_NODE", "PIPEWIRE_LATENCY",
+           "JACK_DEFAULT_SERVER")
+FORWARD_PREFIXES = ("WINEASIO_",)
+# A display the sandbox does not have must not come from the host session either.
+UNSET_IF_ABSENT = ("DISPLAY", "WAYLAND_DISPLAY")
 
 def in_flatpak() -> bool:
     return FLATPAK_INFO.exists()
@@ -27,10 +36,22 @@ def wrap(cmd: list[str], env: dict | None = None, cwd: str | os.PathLike | None 
     """The argv that runs `cmd` on the host with `env` added to the host session
     environment (unchanged outside Flatpak; the caller merges env then)."""
     if not in_flatpak(): return list(cmd)
-    out = ["flatpak-spawn", "--host", *(f"--unset-env={v}" for v in UNSET)]
+    unset = [*UNSET, *(v for v in UNSET_IF_ABSENT if not os.environ.get(v))]
+    out = ["flatpak-spawn", "--host", *(f"--unset-env={v}" for v in unset)]
     if cwd: out.append(f"--directory={cwd}")
-    out += [f"--env={k}={v}" for k, v in (env or {}).items()]
+    out += [f"--env={k}={v}" for k, v in {**sandbox_env(), **(env or {})}.items()]
     return out + ["--", *cmd]
+
+def _sandbox_only(value: str) -> bool:
+    """A path that exists only inside the sandbox (Flatpak's Xauthority copy,
+    its PulseAudio socket proxy): meaningless to a host process."""
+    return "/run/flatpak/" in value or value.startswith("/.flatpak")
+
+def sandbox_env() -> dict:
+    """The FORWARD variables set in this (sandboxed) process that mean the same
+    on the host."""
+    return {k: v for k, v in os.environ.items()
+            if (k in FORWARD or k.startswith(FORWARD_PREFIXES)) and v and not _sandbox_only(v)}
 
 def _kw(env: dict | None, cwd, kw: dict) -> dict:
     if in_flatpak():
