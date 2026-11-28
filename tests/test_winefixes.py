@@ -12,13 +12,14 @@ def _fake_build(tmp: Path) -> wine.WineBuild:
         f = winefixes.dest(b, name); f.parent.mkdir(parents=True, exist_ok=True); f.write_bytes(b"stock " + name.encode())
     return b
 
-def _tarball(tmp: Path, version="11.17", payload=b"patched dcomp") -> Path:
+def _tarball(tmp: Path, version="11.17", payload=b"patched dcomp", server=b"#!/bin/sh\necho Wine 11.17\n") -> Path:
     """A release tarball carrying every DLL the app expects (FIXES), dcomp with `payload`."""
     pkg = tmp / "wine-fixes"; pkg.mkdir(); files = {}
     for name in winefixes.FIXES:
-        data = payload if name == "dcomp.dll" else b"patched " + name.encode()
+        data = payload if name == "dcomp.dll" else server if name == "bin/wineserver" else b"patched " + name.encode()
         (pkg / name).parent.mkdir(parents=True, exist_ok=True)
         (pkg / name).write_bytes(data); files[name] = hashlib.sha256(data).hexdigest()
+        if name.startswith("bin/"): (pkg / name).chmod(0o755)
     (pkg / "manifest.json").write_text(json.dumps({"wine_version": version, "files": files, "patches": ["x.patch"]}))
     tgz = tmp / f"wine-fixes-{version}.tar.gz"
     with tarfile.open(tgz, "w:gz") as t: t.add(pkg, arcname="wine-fixes")
@@ -27,6 +28,10 @@ def _tarball(tmp: Path, version="11.17", payload=b"patched dcomp") -> Path:
 class WineFixesTest(unittest.TestCase):
     def test_version_comes_from_the_build_name(self):
         self.assertEqual(winefixes.wine_version(), "11.17"); self.assertEqual(winefixes.asset_name(), "wine-fixes-11.17.tar.gz")
+    def test_wineserver_goes_to_the_build_bin(self):
+        b = wine.WineBuild(Path("/w"))
+        self.assertEqual(winefixes.dest(b, "bin/wineserver"), Path("/w/bin/wineserver"))
+        self.assertEqual(winefixes.dest(b, "x86_64-unix/win32u.so"), Path("/w/lib/wine/x86_64-unix/win32u.so"))
     def test_install_keeps_the_original_and_verifies_by_hash(self):
         with tempfile.TemporaryDirectory() as d:
             tmp = Path(d); b = _fake_build(tmp); tgz = _tarball(tmp)
@@ -91,7 +96,17 @@ class WineFixesTest(unittest.TestCase):
             with tarfile.open(old, "w:gz") as t: t.add(tmp / "x/wine-fixes", arcname="wine-fixes")
             with mock.patch.dict("os.environ", {"VSTENV_WINE_FIXES": str(old)}): got = winefixes.install(b)
             self.assertEqual(sorted(got), sorted(set(winefixes.FIXES) - {"x86_64-unix/win32u.so"}))
-            self.assertEqual(sorted(winefixes.status(b)["missing"]), ["x86_64-unix/win32u.so"])
+            # what the tarball does not carry is not applicable: an older release without bin/wineserver must not count as missing for good
+            st = winefixes.status(b); self.assertEqual(st["missing"], []); self.assertTrue(st["installed"])
+            with mock.patch.dict("os.environ", {"VSTENV_WINE_FIXES": str(old)}), mock.patch.object(winefixes.shutil, "copy2") as copy:
+                winefixes.install(b); copy.assert_not_called()   # in place: not reinstalled on every start
+    def test_a_wineserver_that_does_not_run_is_put_back(self):
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d); b = _fake_build(tmp); tgz = _tarball(tmp, server=b"#!/bin/sh\nexit 127\n")
+            with mock.patch.dict("os.environ", {"VSTENV_WINE_FIXES": str(tgz)}): got = winefixes.install(b)
+            self.assertNotIn("bin/wineserver", got)
+            self.assertEqual((b.root / "bin/wineserver").read_bytes(), b"stock bin/wineserver")
+            self.assertIn("dcomp.dll", got)
     def test_install_refuses_a_tarball_for_another_wine(self):
         with tempfile.TemporaryDirectory() as d:
             tmp = Path(d); b = _fake_build(tmp); tgz = _tarball(tmp, version="10.0")
@@ -164,7 +179,10 @@ class WineFixesTest(unittest.TestCase):
             with tarfile.open(old, "w:gz") as t: t.add(tmp / "x/wine-fixes", arcname="wine-fixes")
             with mock.patch.dict("os.environ", {"VSTENV_WINE_FIXES": str(old)}): got = winefixes.install(b)
             self.assertEqual(sorted(got), sorted(set(winefixes.FIXES) - {"x86_64-unix/win32u.so"}))
-            self.assertEqual(sorted(winefixes.status(b)["missing"]), ["x86_64-unix/win32u.so"])
+            # what the tarball does not carry is not applicable: an older release without bin/wineserver must not count as missing for good
+            st = winefixes.status(b); self.assertEqual(st["missing"], []); self.assertTrue(st["installed"])
+            with mock.patch.dict("os.environ", {"VSTENV_WINE_FIXES": str(old)}), mock.patch.object(winefixes.shutil, "copy2") as copy:
+                winefixes.install(b); copy.assert_not_called()   # in place: not reinstalled on every start
     def test_remove_deletes_additions_that_have_no_original(self):
         with tempfile.TemporaryDirectory() as d:
             tmp = Path(d); b = _fake_build(tmp); tgz = _tarball(tmp)

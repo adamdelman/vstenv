@@ -22,7 +22,7 @@ the prefix needs touching.
 The DLLs land in the build, not the prefix, so everything that runs this
 Wine gets them: standalone programs and the yabridge plugin hosts alike.
 """
-import hashlib, json, os, re, shutil, tarfile, tempfile
+import hashlib, json, os, re, shutil, subprocess, tarfile, tempfile
 from datetime import date
 from pathlib import Path
 from . import paths, wine
@@ -60,6 +60,7 @@ FIXES = {"dcomp.dll": "DirectComposition (Steinberg's VSTGUI: HALion Sonic 7, Cu
          "nirescan.exe": "NI controllers plugged in after Wine started are seen (Komplete Kontrol keyboards, Maschine; from ni-wine)",
          "x86_64-unix/winex11.so": "a cursor set from another process shows as an arrow, not nothing (WebView2 windows: Minimal Hub); a dropped file's dialog takes clicks, one taskbar click restores a minimized window, and closing a window ends its open menu first (Cubase 14)",
          "x86_64-unix/win32u.so": "menu icons keep their alpha (32-bit menu bitmaps are alpha-blended); built with FreeType and fontconfig",
+         "bin/wineserver": "threads at priority 15 and up (Cubase's audio workers) run SCHED_FIFO 70-80 where RLIMIT_RTPRIO allows (WineASIO at 64 samples dropped periods)",
          "msi.dll": "a feature's cost over its children reads the child features (Cubase 16's Setup.exe crashed in MsiGetFeatureCost, so the Download Assistant's install failed)",
          "windows.globalization.dll": "the Windows.Globalization.Calendar class (Cubase 14-16's head-tracking module died at start without it)",
          "windows.perception.stub.dll": "SpatialLocator.GetDefault says \"no headset\" (Cubase 14-16's head-tracking module died at start)"}
@@ -71,7 +72,8 @@ WINRT_CLASSES = {"windows.globalization.dll": "Windows.Globalization.Calendar",
 def dest(build: wine.WineBuild, name: str) -> Path:
     """Where a packaged file goes in the Wine build: a bare name is a 64-bit PE
     module (lib/wine/x86_64-windows); a name with a folder, such as
-    i386-windows/powershell.exe, is relative to lib/wine."""
+    i386-windows/powershell.exe, is relative to lib/wine; bin/wineserver to the build's root."""
+    if name.startswith("bin/"): return build.root / name
     return build.root / ("lib/wine/" + name if "/" in name else f"{PE_DIR}/{name}")
 
 def wine_version(build=None) -> str:
@@ -105,7 +107,9 @@ def has(build: wine.WineBuild | None, dll: str) -> bool: return dll in installed
 
 def status(build: wine.WineBuild | None) -> dict:
     inst = installed(build)
-    missing = [d for d in FIXES if d not in inst]
+    # only what the installed tarball carries: an older release without bin/wineserver is complete, not missing it for good
+    offered = set((marker(build) or {}).get("offered") or FIXES)
+    missing = [d for d in FIXES if d in offered and d not in inst]
     return {"installed": not missing, "files": sorted(inst), "missing": missing, "asset": asset_name(build), "marker": marker(build) if build else None}
 
 def _locate(build, r) -> tuple[Path | None, str, str]:
@@ -118,6 +122,11 @@ def _locate(build, r) -> tuple[Path | None, str, str]:
         if f.is_file(): return f, f"{f.name} (VSTENV_WINE_FIXES)", "local"
         r.log(f"VSTENV_WINE_FIXES={override} does not exist; ignoring")
     return None, f"{asset_name(build)} ({RELEASE_REPO} release {WINE_FIXES['tag']})", WINE_FIXES["tag"]
+
+def _runs(exe: Path) -> bool:
+    """The program starts and answers --version (the rebuilt wineserver is linked against this system's libraries)."""
+    try: return subprocess.run([str(exe), "--version"], capture_output=True, timeout=10).returncode == 0
+    except (OSError, subprocess.SubprocessError): return False
 
 def install(build: wine.WineBuild, reporter=None, force=False) -> dict[str, str]:
     """Put the pinned release's patched DLLs into the Wine build. Idempotent: nothing is
@@ -155,11 +164,15 @@ def install(build: wine.WineBuild, reporter=None, force=False) -> dict[str, str]
                 if dst.exists() and _sha(dst) == sha: done[name] = sha; continue
                 tmpf = dst.with_name(f".{dst.name}.new")
                 shutil.copy2(f, tmpf); tmpf.replace(dst)      # rename: a running program keeps its old mapping
+                if name.startswith("bin/") and not _runs(dst):   # a server that does not start breaks every program
+                    r.log(f"{name} from {tgz.name} does not run here; the stock one is back")
+                    if orig.exists(): shutil.copy2(orig, tmpf); tmpf.replace(dst)
+                    continue
                 done[name] = sha
         finally:   # record what did land even if a later copy failed (disk full): status() must not deny a DLL that is in place
             m = marker(build) or {}
             files = dict(m.get("files") or {}); files.update(done)
-            (build.root / MARKER_NAME).write_text(json.dumps({"wine_version": wine_version(build), "files": files, "source": label, "release": tag,
+            (build.root / MARKER_NAME).write_text(json.dumps({"wine_version": wine_version(build), "files": files, "source": label, "release": tag, "offered": sorted(man.get("files", {})),
                                                                "patches": man.get("patches", []), "installed": date.today().isoformat()}, indent=2))
     (r.ok if done else r.fail)(", ".join(f"{n} ({FIXES.get(n, 'patched')})" for n in done) if done else "nothing usable in the tarball")
     return installed(build)

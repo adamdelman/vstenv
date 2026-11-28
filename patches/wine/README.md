@@ -782,3 +782,78 @@ the driver reads from `HKCU\Software\Wine\WineASIO` when a program opens it.
 Checked with the ASIO client: after `inputs 4`, `fixed-buffer 0`, `buffer 256`
 the driver reports 4 inputs and a 16 to 8192 range with 256 preferred, and
 `ControlPanel()` runs the launcher.
+
+## server-realtime-priority-<version>.patch
+
+Wine's server maps a thread's Windows priority to a nice value only ("FIXME:
+handle realtime priorities"), so the threads a DAW marks
+`THREAD_PRIORITY_TIME_CRITICAL` for its audio (Cubase's 14 "Audio Realtime"
+workers) ran `SCHED_OTHER` at nice -11 and lost the CPU to ordinary work. At a
+64-sample WineASIO buffer (1.33 ms) that dropped whole periods in Cubase 14, 15
+and 16. The patch puts a thread of priority 15 or more on `SCHED_FIFO`:
+time-critical, and also highest in the high class, which Windows ranks the same
+(Cubase runs in `HIGH_PRIORITY_CLASS`; its "Audio Realtime" threads are
+time-critical, its "Audio Prefetch" threads highest, both priority 15, seen with
+a tracing server), and so every thread of a
+`REALTIME_PRIORITY_CLASS` process, at 70 (priority 15) to 80
+(priority 31), below PipeWire's data loop
+(83 here, 88 by default) and JACK's, and capped by the program's own
+`RLIMIT_RTPRIO` (the kernel checks the limit of the thread being changed, not the
+server's; a soft limit below the hard one is raised first). It uses
+`SCHED_RESET_ON_FORK`, so a child process never inherits it, and puts a thread
+back on `SCHED_OTHER` when its priority drops. A thread that is already realtime
+and that the server did not make so is left alone: WineASIO's callback runs in
+pipewire-jack's data loop, a Wine thread PipeWire itself puts on FIFO 83, and a
+host calling `SetThreadPriority` on it must neither lower it to 70 nor drop it to
+`SCHED_OTHER`. The same goes for a thread the server made realtime and someone
+else then changed: before changing a thread again the server checks that it still
+has the policy and priority the server gave it.
+
+Realtime throttling can be off (`sched_rt_runtime_us` -1, or equal to the
+period, as on the machine this was made on), and then a `SCHED_FIFO` thread that
+spins keeps its CPU for good; threads that spin on every CPU they may use would
+also starve the server itself (`SCHED_OTHER`), so a check in its main loop is no
+guard. The server starts a guard thread of its own on `SCHED_FIFO` above every
+thread it makes realtime (81, or the server's `RLIMIT_RTPRIO`, and the threads
+then go at most one below it); without one (no rights) no thread is made
+realtime. Every 250 ms the guard reads the CPU time (`schedstat`) of each thread
+the server made realtime: one that ran more than 80% of the measured time since
+the last look (at least 200 ms) goes back to `SCHED_OTHER` (its nice value) for
+a second, then realtime again, much as Windows' MMCSS keeps 20% of the CPU for
+other threads. It works from a table of unix ids that the main loop fills under a
+priority-inheriting lock, and never touches the server's objects. An audio thread that sleeps between periods is
+never held back. With `RLIMIT_RTPRIO` 0 (no
+`@audio`/`@realtime` limits), or when the kernel refuses, nothing changes: the
+nice mapping applies as before. Wine-Staging carried an opt-in version of this
+(`server-Realtime_Priority`, set by `STAGING_RT_PRIORITY_BASE`) until February
+2025; this one needs no variable. Only `bin/wineserver` is rebuilt, from the
+second configure (which keeps inotify, as the pinned build has it).
+
+Checked with a test program (`SetThreadPriority` time-critical, then normal):
+stock, the thread runs `TS` nice -11; patched, `FF` 70, then `TS` nice 0 again;
+in the realtime class `FF` 75 to 80; a thread put on `FF` 83 from outside stays
+`FF` 83 through time-critical and back to normal; a time-critical thread that
+spins alternates a quarter second at `FF` 70 and a second at `TS` nice -11, while one that
+works 1 ms in 3 stays `FF` 70, also with two spinners and the server pinned to the same two CPUs;
+a program with `RLIMIT_RTPRIO` 50 under a server with 98 gets `FF` 50, one with soft 0 and hard 98 `FF` 70; under `prlimit --rtprio=0` (both for the
+server and for the client only) `TS` nice -11, no message. `tests/test_wine_rt.py` runs these
+checks on a real Wine (`VSTENV_RT_WINE=<build root> VSTENV_RT_SERVER=<wineserver>`).
+The build script also checks that the rebuilt server lists the same requests, in
+the same order, as the pinned build's own, and the app puts the stock server back
+if the rebuilt one does not start.
+
+Measured (WineASIO on PipeWire, quantum 64, private null sinks, 30 s each; ERR is
+PipeWire's xrun count for Cubase's node, clicks and zero runs from the capture):
+
+| Cubase | server | sine: ERR, clicks, zero runs | HALion pad: ERR, clicks |
+|---|---|---|---|
+| 16 | stock | +6, 7, 2 | +13, 13 |
+| 16 | patched | +4, 4, 0 / +0, 1, 1 | +0, 0 / +1, 1 |
+| 15 | stock | +4, 4, 0 | +8, 4 |
+| 15 | patched | +1, 1, 0 | +0, 1 |
+
+At 128 and 256 both stay clean (ERR 0). What is left at 64 is not Wine's: a
+minimal ASIO host with an empty callback (about 1 µs) and a native JACK client
+on the same graph drop the same (ERR 2 to 6 a minute each, wake-ups up to about
+3 ms late), with deep C-states off too, and the native client drops just the same
+when the Scarlett 2i2's own clock drives the graph instead of the null sink.
