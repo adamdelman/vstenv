@@ -166,12 +166,24 @@ def program_exes(p: Prefix) -> list[str]:
         except Exception: continue
         if not d.is_dir(): continue
         exe = prog.exe.rsplit("\\", 1)[-1]
-        files = [f for f in d.iterdir() if f.is_file() and f.suffix.lower() in (".exe", ".dll")]
-        if not any(imports_dcomp(f, cache) for f in files): continue
-        if exe in browser: continue
-        out.add(exe)
+        if uses_dcomp(p, exe, d, cache, browser): out.add(exe)
     _save(cache)
     return sorted(out)
+
+def uses_dcomp(p: Prefix, exe_name: str, d: Path, cache: dict | None = None, browser: set[str] | None = None) -> bool:
+    """Does the program exe_name, installed in folder d, draw through DirectComposition?
+
+    Yes when the exe or any exe/DLL beside it imports dcomp.dll -- Cubase 14's
+    own exe does not, its graphics2d.dll does -- unless its window is a browser
+    control (see browser_window_exes). The one answer for setup, recipes and doctor."""
+    if exe_name in (browser if browser is not None else browser_window_exes(p)): return False
+    own = cache is None
+    if own: cache = _load()
+    try: files = [f for f in d.iterdir() if f.is_file() and f.suffix.lower() in (".exe", ".dll")]
+    except OSError: return False
+    res = any(imports_dcomp(f, cache) for f in files)
+    if own: _save(cache)
+    return res
 
 def plugin_overrides(p: Prefix) -> list[tuple[str, str]]:
     """(bundle path, overrides) for every bridged plugin whose PE imports dcomp.dll.

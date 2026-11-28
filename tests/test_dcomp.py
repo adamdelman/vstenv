@@ -58,4 +58,33 @@ class ProgramsAndPluginsTest(unittest.TestCase):
                 self.assertEqual(reg[dcomp.overrides_key("A.exe")], {"d3d10core": "builtin", "d3d11": "builtin", "dxgi": "builtin"})
                 self.assertEqual(dcomp.apply_program_overrides(p, ["A.exe"]), [])
 
+    def test_recipe_auto_keeps_the_fix_when_only_a_dll_beside_the_exe_imports_dcomp(self):
+        # Cubase 14: Cubase14.exe does not import dcomp.dll, graphics2d.dll beside it does.
+        # rendering=auto must hand back to the same detection setup used, and doctor stay green.
+        from vstenv import recipes
+        with tempfile.TemporaryDirectory() as tmp:
+            p = self._prefix(tmp); reg = {}
+            d = p.drive_c / "Program Files/Steinberg/Cubase 14"; d.mkdir(parents=True)
+            for n in ("Cubase14.exe", "graphics2d.dll"): (d / n).write_bytes(b"MZ")
+            prog = programs.Program(name="Cubase 14", exe=r"C:\Program Files\Steinberg\Cubase 14\Cubase14.exe",
+                                    install_dir=r"C:\Program Files\Steinberg\Cubase 14")
+            def imports(f): return ["dcomp.dll"] if f.name == "graphics2d.dll" else ["user32.dll"]
+            with mock.patch.object(dcomp, "CACHE", Path(tmp) / "cache.json"), mock.patch.object(pe, "imports", side_effect=imports), \
+                 mock.patch.object(programs, "installed", return_value=[prog]), \
+                 mock.patch.object(recipes, "choices", return_value={"programs": {}, "plugins": {}}), \
+                 mock.patch.object(recipes, "table", return_value={"programs": {}, "plugins": {}}), \
+                 mock.patch.object(p, "reg_add", side_effect=lambda k, n, v, kind="REG_SZ": reg.setdefault(k, {}).__setitem__(n, v)), \
+                 mock.patch.object(p, "reg_delete_value", side_effect=lambda k, n: reg.get(k, {}).pop(n, None)), \
+                 mock.patch.object(p, "reg_query", side_effect=lambda k: dict(reg.get(k, {}))):
+                self.assertFalse(dcomp.imports_dcomp(d / "Cubase14.exe"))
+                self.assertTrue(dcomp.uses_dcomp(p, "Cubase14.exe", d))
+                for exe_path in (None, d / "Cubase14.exe"):             # setup's apply_all, then the GUI/CLI
+                    self.assertEqual(dcomp.apply_program_overrides(p, dcomp.program_exes(p)), ["Cubase14.exe"])
+                    self.assertEqual(recipes.apply_program(p, "Cubase14.exe", {"rendering": "auto"}, exe_path=exe_path), ["rendering=auto"])
+                    self.assertTrue(dcomp.program_fix_applied(p, "Cubase14.exe"))
+                    missing = [e for e in dcomp.program_exes(p) if not dcomp.program_fix_applied(p, e)]  # doctor's check
+                    self.assertEqual(missing, [])
+                    reg.clear()
+                self.assertFalse(dcomp.uses_dcomp(p, "Cubase14.exe", d, browser={"Cubase14.exe"}))   # a browser window never
+
 if __name__ == "__main__": unittest.main()
