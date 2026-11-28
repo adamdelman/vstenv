@@ -208,7 +208,7 @@ class DebugRunTest(unittest.TestCase):
 class CliTest(unittest.TestCase):
     def run_cli(self, *argv):
         with mock.patch.object(cli, "_prefix"), mock.patch.object(cli.programs, "find", side_effect=lambda p, n: n), \
-             mock.patch.object(cli, "_run_debug") as rd:
+             mock.patch.object(cli.vendors, "for_program", return_value=None), mock.patch.object(cli, "_run_debug") as rd:
             cli.main(["run", *argv])
         return rd.call_args.args[1:3]
 
@@ -217,6 +217,17 @@ class CliTest(unittest.TestCase):
         self.assertEqual(self.run_cli("Cubase 14", "--debug"), ("Cubase 14", "crash"))
         self.assertEqual(self.run_cli("--debug=graphics", "Cubase 14"), ("Cubase 14", "graphics"))
         with self.assertRaises(SystemExit): self.run_cli("--debug=nope", "Cubase 14")
+
+    def test_debug_run_of_a_vendor_manager_finishes_its_installs(self):
+        # `run --debug` of the Download Assistant must still finish what it staged, as a plain run does
+        v = mock.Mock(); prog = mock.Mock()
+        for manager, finished in ((True, 1), (False, 0)):
+            v.reset_mock(); v.is_manager_program.return_value = manager
+            with mock.patch.object(cli, "_prefix"), mock.patch.object(cli.programs, "find", return_value=prog), \
+                 mock.patch.object(cli.vendors, "for_program", return_value=v), mock.patch.object(cli, "_run_debug") as rd, \
+                 mock.patch.object(cli.setup, "after_change") as sync:
+                cli.main(["run", "--debug", "Steinberg Download Assistant"])
+            rd.assert_called_once(); self.assertEqual(v.finish_installs.call_count, finished); self.assertEqual(sync.call_count, finished)
 
 class ReportDebugLogsTest(unittest.TestCase):
     def setUp(self):

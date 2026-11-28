@@ -318,12 +318,15 @@ def cmd_run(a):
     if a.name is None: sys.exit(f"usage: {APP_NAME} run <name> [--debug[={'|'.join(debugrun.TOPIC_NAMES)}]]")
     if a.debug and a.debug not in debugrun.TOPIC_NAMES: sys.exit(f"--debug takes one of: {', '.join(debugrun.TOPIC_NAMES)}")
     prog = programs.find(p, a.name)
-    if a.debug: return _run_debug(p, prog, a.debug, r)
     t0 = time.time()
-    try: proc = programs.run(p, prog, r)
-    except RuntimeError as e: sys.exit(str(e))
     v = vendors.for_program(prog)
     if v is None or not v.is_manager_program(prog): v = None
+    if a.debug:
+        _run_debug(p, prog, a.debug, r)              # returns once the program has exited
+        if v is not None: _finish_installs(v, p, r, t0); setup.after_change(p, r)
+        return
+    try: proc = programs.run(p, prog, r)
+    except RuntimeError as e: sys.exit(str(e))
     if a.wait:
         proc.wait()
         _finish_installs(v, p, r, t0)                   # as `manager launch --wait` and the GUI do
