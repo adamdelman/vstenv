@@ -210,7 +210,7 @@ def apply_program(p: Prefix, exe_name: str, settings: dict, reporter=None, exe_p
     """Write a program's settings to the registry. 'auto' for rendering removes
     the per-exe Direct3D values and lets detection put back what it finds, when
     the exe is at hand. Returns what was changed."""
-    from . import unmanaged, webview2, dcomp, fmx
+    from . import unmanaged, webview2, dcomp, fmx, programs
     r = null_reporter(reporter); done = []
     rend = settings.get("rendering", "auto")
     cur = {}
@@ -225,9 +225,15 @@ def apply_program(p: Prefix, exe_name: str, settings: dict, reporter=None, exe_p
         for d in _D3D:
             if d in cur: p.reg_delete_value(overrides_key(exe_name), d)
         done.append("rendering=auto")
+        # Setup passes no exe path: find the installed program, so detection still runs.
+        d = exe_path.parent if exe_path is not None else None
+        try:
+            prog = next(x for x in programs.installed(p) if x.exe and x.exe.rsplit("\\", 1)[-1].lower() == exe_name.lower())
+            exe_path, d = p.to_host(prog.exe), p.to_host(prog.install_dir or prog.exe.rsplit("\\", 1)[0])
+        except Exception: pass
         if exe_path is not None and exe_path.exists():
             if fmx.is_fmx(exe_path): fmx.apply(p, exe_name)
-            elif dcomp.imports_dcomp(exe_path): dcomp.apply_program_overrides(p, [exe_name])
+            elif dcomp.uses_dcomp(p, exe_name, d): dcomp.apply_program_overrides(p, [exe_name])
     wm = settings.get("wm_away", "auto")
     if wm == "on" and not unmanaged.applied(p, exe_name): unmanaged.apply(p, [exe_name]); done.append("wm_away=on")
     elif wm == "off" and unmanaged.applied(p, exe_name): unmanaged.clear(p, exe_name); done.append("wm_away=off")
