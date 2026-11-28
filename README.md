@@ -1,9 +1,9 @@
 # VST Environment for Linux
 
-> **Cubase test build (v0.1.169-cubase.8).** This branch is a test build of the
+> **Cubase test build (v0.1.171-cubase.2).** This branch is a test build of the
 > Cubase 14–16 fixes, not an official vstenv release. To try it, download
 > `vstenv.flatpak` from the
-> [v0.1.169-cubase.8 release](https://github.com/adamdelman/vstenv/releases/tag/v0.1.169-cubase.8)
+> [v0.1.171-cubase.2 release](https://github.com/adamdelman/vstenv/releases/tag/v0.1.171-cubase.2)
 > and install it:
 >
 > ```sh
@@ -450,9 +450,9 @@ project's own signed repository instead.
 
 Both builds ran on public GitHub Actions on the fork, from the commits on this branch:
 
-- Run A, [v0.1.169-cubase.7](https://github.com/adamdelman/vstenv/actions/runs/46118197356),
+- Run A, [v0.1.171-cubase.1](https://github.com/adamdelman/vstenv/actions/runs/46125823379),
   built the patched Wine DLLs (`wine-fixes-11.17.tar.gz`) from the Wine sources plus `patches/wine/`.
-- Run B, [v0.1.169-cubase.8](https://github.com/adamdelman/vstenv/actions?query=branch%3Av0.1.169-cubase.8),
+- Run B, [v0.1.171-cubase.2](https://github.com/adamdelman/vstenv/actions?query=branch%3Av0.1.171-cubase.2),
   built the Flatpak you install. That Flatpak downloads run A's DLLs by their sha256, given below.
 
 Downloads the app makes, checked by sha256. A file that doesn't match is refused:
@@ -460,7 +460,7 @@ Downloads the app makes, checked by sha256. A file that doesn't match is refused
 | What | URL | sha256 |
 |---|---|---|
 | Wine 11.17 (`vstenv/wine.py`) | https://github.com/Kron4ek/Wine-Builds/releases/download/11.17/wine-11.17-staging-amd64-wow64.tar.xz | `278d80f3073f1a81386baafb41b83638d89eedaffb640f31599855145ed4fd7b` |
-| Wine fixes (`vstenv/winefixes.py`) | https://github.com/adamdelman/vstenv/releases/download/v0.1.169-cubase.7/wine-fixes-11.17.tar.gz | `ed846eddc762f4ae5920c583e923b6c3644bbc64fdf420efcba68a0c64699749` |
+| Wine fixes (`vstenv/winefixes.py`) | https://github.com/adamdelman/vstenv/releases/download/v0.1.171-cubase.1/wine-fixes-11.17.tar.gz | `9bc5d4cf2e1c62fe88649c011712ddd46d0f7e388929295f8033efd060a259dd` |
 
 Each DLL in the Wine-fixes archive is also checked against the archive's `manifest.json`.
 yabridge is not pinned. The app takes it from the latest
