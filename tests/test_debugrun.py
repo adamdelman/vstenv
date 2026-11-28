@@ -263,12 +263,12 @@ class ReportDebugLogsTest(unittest.TestCase):
         # Steinberg Download Assistant's log names the machine and who started it.
         log = ("sam-desktop.lan: SDA 2.1 started by sam in C:\\Program Files (x86)\\Steinberg\n"
                "SAM-DESKTOP ok; samba sams sesame stay; user is SAM; xy too short")
-        with mock.patch.object(report, "_login", return_value="adam"), \
-             mock.patch.object(report, "_hostname", return_value="adam-desktop.lan"), \
-             mock.patch.object(Path, "home", return_value=Path("/home/adam")):
+        with mock.patch.object(report, "_login", return_value="sam"), \
+             mock.patch.object(report, "_hostname", return_value="sam-desktop.lan"), \
+             mock.patch.object(Path, "home", return_value=Path("/home/sam")):
             out = report.scrub(log)
         self.assertEqual(out, "<host>: SDA 2.1 started by <user> in C:\\Program Files (x86)\\Steinberg\n"
-                              "<host> ok; adamant adams madam stay; user is <user>; xy too short")
+                              "<host> ok; samba sams sesame stay; user is <user>; xy too short")
         with mock.patch.object(report, "_login", return_value="user"), mock.patch.object(report, "_hostname", return_value="localhost"), \
              mock.patch.object(Path, "home", return_value=Path("/home/xy")):
             self.assertEqual(report.scrub("C:\\users\\user and user on localhost, xy"), "C:\\users\\<user> and <user> on localhost, xy")   # placeholders and localhost left alone
