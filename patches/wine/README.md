@@ -410,6 +410,39 @@ component not running"). The idea and that warning come from
 switch this reduces to the environment variable. Only the 64-bit `ntdll` is
 rebuilt, so 32-bit plugins are not covered.
 
+## ntdll-zz-hide-timer-resolution-<version>.patch
+
+With its editor open and nothing moving, SINE Player's plugin host used 58% of
+one core in REAPER and IK's Hammond B-3X 68%. One thread did it, and sampling
+its program counter put it in DXVK's `dxgi.dll`, in a loop around
+`NtQueryPerformanceCounter`.
+
+DXVK's waits (`Sleep::sleep()` in `src/util/util_sleep.cpp`) sleep for most of
+the time and spin for the rest, because sleeping on Windows overshoots. How long
+it spins comes from `NtQueryTimerResolution`, which DXVK looks up with
+`GetProcAddress`: four times the resolution (Wine reports 1 ms) plus a sixth of
+the wait. `IDXGIOutput::WaitForVBlank` is such a wait, and JUCE calls it in a
+loop from a thread of its own (`juce_VBlank_windows.cpp`) for as long as a
+plugin has a window. At 60 Hz that is 6.8 ms of spinning in every 16.7 ms. When
+the lookup fails DXVK keeps a granularity of zero and sleeps the whole wait,
+which is right under Wine: `NtDelayExecution` is a `select()`. That was the
+behaviour while Wine's function was a stub that failed; DXVK 3.2 is the same.
+
+The patch makes `LdrGetProcedureAddress` not find `NtQueryTimerResolution` when
+`WINE_HIDE_TIMER_RESOLUTION` is set (same shape as `ntdll-hide-wine-version`).
+vstenv sets it for every program and plugin host; `WINE_HIDE_TIMER_RESOLUTION=0`
+in the environment, or a line in `plugin-host-env`, turns it off.
+
+Percent of one core, REAPER with one plugin and its editor open, off / on:
+SINE Player 58 / 17, Hammond B-3X 68 / 28, Analog Lab V 29 / 28, Serum 2
+16 / 16, Kontakt 8 16 / 16, Squash 119 / 119 (on Wine's own Direct3D, which
+does not go through DXVK). Not tested: a plugin protected by iLok, and any
+program other than these plugins in REAPER.
+
+A second idea was measured and left out: letting dcomp's compositor skip a
+target whose swapchain has presented nothing new. It changed SINE Player by two
+points and Squash by none.
+
 ## winex11-cursor-from-other-process-<version>.patch
 
 The pointer vanished over every WebView2 window (Minimal Audio's Hub, a Tauri
@@ -610,6 +643,27 @@ context of a multi-threaded factory now turns `ID3D11Multithread` protection on,
 Test: with this patch Cubase opens its Hub and project window and the hang signature (a thread in
 `dbghelp`, threads queued in `d2d_device_context_draw`) is gone, in three runs; without it the hang
 happened in every run.
+
+## d2d1-zzzz-device-d3d-objects-<version>.patch
+
+Squash (Minimal Audio, JUCE 8) used 120% of a core in REAPER and still drew
+only 13 frames a second. Sampling the two busy threads showed wined3d parsing
+shader bytecode and the GL driver compiling it, every frame.
+`d2d_device_context_init()` creates five vertex shaders with their input
+layouts, the pixel shader, the quad's index and vertex buffers and a rasteriser
+state for every device context, and Squash makes about 190 contexts a second
+on one Direct2D device (JUCE draws cached images through contexts of their
+own). `d2d1-zz-shader-cache` had removed the compile; the D3D objects were
+still new each time.
+
+The patch makes those objects once per Direct2D device; each context takes a
+reference. Squash: 13-14 frames a second before, 20 after, at the same CPU (it
+stays CPU-bound: what is left is its "Get started" panel's dotted bar, drawn as
+dozens of ellipses per frame, each a geometry with new vertex buffers). SINE
+Player, Janggo and Squash draw the same as before. Not tested: Cubase, HALion
+Sonic, and a program that uses one Direct2D device from several threads at
+once (the objects are made under a lock; the contexts only read them).
+
 ## dxgi-zz-shared-wined3d-<version>.patch
 
 `D3D11CreateDevice` makes a new DXGI factory, and every factory made its own
