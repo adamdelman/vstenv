@@ -261,8 +261,8 @@ class ReportDebugLogsTest(unittest.TestCase):
 
     def test_scrub_host_and_login_names_as_words(self):
         # Steinberg Download Assistant's log names the machine and who started it.
-        log = ("adam-desktop.lan: SDA 2.1 started by adam in C:\\Program Files (x86)\\Steinberg\n"
-               "ADAM-DESKTOP ok; adamant adams madam stay; user is ADAM; xy too short")
+        log = ("sam-desktop.lan: SDA 2.1 started by sam in C:\\Program Files (x86)\\Steinberg\n"
+               "SAM-DESKTOP ok; samba sams sesame stay; user is SAM; xy too short")
         with mock.patch.object(report, "_login", return_value="adam"), \
              mock.patch.object(report, "_hostname", return_value="adam-desktop.lan"), \
              mock.patch.object(Path, "home", return_value=Path("/home/adam")):
